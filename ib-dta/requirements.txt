@@ -1,0 +1,19 @@
+# IB-DTA requirements
+#
+# The builtin encoder backend (default) needs only these. No dgl, which is
+# the dependency that usually breaks reproduction of DrugBAN.
+
+torch>=2.0
+numpy>=1.24
+pandas>=1.5
+scipy>=1.10
+scikit-learn>=1.2
+matplotlib>=3.6
+rdkit>=2023.3.1
+PyYAML>=6.0
+
+# Optional: only if you set ENCODER.BACKEND = "dgl" to use DrugBAN's
+# original encoders. Version-sensitive; pin to match your torch/CUDA.
+# dgl>=1.1.0
+# dgllife>=0.3.2
+# yacs>=0.1.8

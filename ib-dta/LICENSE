@@ -1,0 +1,57 @@
+MIT License
+
+Copyright (c) 2026 IB-DTA contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+THIRD-PARTY NOTICES
+================================================================================
+
+This project builds on DrugBAN and reuses parts of its architecture and,
+where the `dgl` backend is selected, its encoder implementations.
+
+  DrugBAN
+  Copyright (c) 2022 peizhenbai
+  Licensed under the MIT License
+  https://github.com/peizhenbai/DrugBAN
+
+  Bai, P., Miljkovic, F., John, B. & Lu, H. "Interpretable bilinear attention
+  network with domain adaptation improves drug-target prediction."
+  Nature Machine Intelligence 5, 126-136 (2023).
+  https://doi.org/10.1038/s42256-022-00605-1
+
+The alpha-entmax projection in `ib_layer.py` is an independent
+reimplementation of the method described in:
+
+  Peters, B., Niculae, V. & Martins, A. F. T. "Sparse Sequence-to-Sequence
+  Models." ACL 2019. https://arxiv.org/abs/1905.05702
+
+Datasets fetched by `download_data.py` are redistributed by their original
+authors under their own terms and are NOT covered by this license:
+
+  Davis / KIBA   via the DeepDTA release
+                 Ozturk, H., Ozgur, A. & Ozkirimli, E. "DeepDTA: deep
+                 drug-target binding affinity prediction."
+                 Bioinformatics 34(17), i821-i829 (2018).
+                 https://github.com/hkmztrk/DeepDTA
+
+  BindingDB /    via the DrugBAN release (MIT), originally derived from
+  BioSNAP /      BindingDB, BioSNAP and the Human dataset of Liu et al.
+  Human          https://github.com/peizhenbai/DrugBAN
