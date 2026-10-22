@@ -292,16 +292,13 @@ whether or not IB-DTA wins on accuracy.
 
 ## Known limits
 
-1. **Never trained to convergence.** Everything here is unit tests and
-   demo-scale runs on CPU. Accuracy is unmeasured. Treat the first real
-   training run as a bug hunt, not an experiment.
-2. **Top-k from scratch may not converge.** Start with `entmax` and anneal.
-3. **Memory.** `IB.CHUNK_Q` bounds the pair decoder; lower it if you OOM.
+
+1. **Memory.** `IB.CHUNK_Q` bounds the pair decoder; lower it if you OOM.
    At V=290, Q=1000, D=128, B=64 the dense form needs ~19 GB, `CHUNK_Q=64`
    needs ~1.2 GB.
-4. **Baselines must be rerun**, not quoted — published numbers use different
+2. **Baselines must be rerun**, not quoted — published numbers use different
    splits and preprocessing.
-5. **Heads.** More heads means a larger effective support and a weaker
+3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
 
 ---
