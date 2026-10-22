@@ -1,5 +1,0 @@
-regime,drug_overlap,target_overlap,pair_leak,n_test
-random,100.0,100.0,16.882900864936794,6012
-cold_drug,0.0,100.0,0.0,6188
-cold_target,100.0,0.0,0.0,6052
-scaffold,0.0,100.0,0.0,6188
