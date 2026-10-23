@@ -132,7 +132,14 @@ def main():
     for s in ("train", "val", "test"):
         p = os.path.join(folder, f"{s}.csv")
         if not os.path.exists(p):
-            raise SystemExit(f"missing {p}")
+            # The canonical benchmark protocol shares ONE independent test
+            # set across all five CV folds, so fold directories hold only
+            # train.csv and val.csv. Fall back to the parent directory.
+            alt = os.path.join(os.path.dirname(folder.rstrip("/")), f"{s}.csv")
+            if s == "test" and os.path.exists(alt):
+                p = alt
+            else:
+                raise SystemExit(f"missing {p}")
         dfs[s] = pd.read_csv(p)
     if args.subset:
         dfs["train"] = dfs["train"].sample(
