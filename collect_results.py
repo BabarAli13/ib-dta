@@ -43,8 +43,10 @@ def main():
         raise SystemExit(f"no finished runs under {args.out}/davis/")
     os.makedirs(args.dest, exist_ok=True)
 
-    keep = [c for c in ("run", "split", "selection", "mse", "rmse", "ci",
-                        "r2", "pearson", "spearman", "support", "best_epoch")
+    keep = [c for c in ("run", "split", "selection", "budget_k", "adaptive",
+                        "mse", "rmse", "ci", "r2", "pearson", "spearman",
+                        "support", "afs", "polarity", "exact_ok",
+                        "relative_residual", "best_epoch", "audit_error")
             if c in df.columns]
     df = df[keep].sort_values("run")
     dest = os.path.join(args.dest, "davis_summary.csv")

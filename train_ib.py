@@ -103,6 +103,8 @@ def main():
                     help="cap training rows (quick runs)")
     ap.add_argument("--eval-subset", type=int, default=None,
                     help="cap val/test rows (quick runs)")
+    ap.add_argument("--no-audit", action="store_true",
+                    help="skip the deletion audit after training")
     ap.add_argument("--set", nargs="*", default=None,
                     help="cfg overrides: --set IB.BUDGET_K 16 IB.SELECTION topk")
     args = ap.parse_args()
@@ -228,9 +230,55 @@ def main():
     print("\nTEST (best epoch %d): " % best["epoch"] +
           "  ".join(f"{k}={v:.4f}" for k, v in test.items()))
 
+    # Faithfulness audit on the best checkpoint. Done here, while the model
+    # and loaders are live, because the frontier figure needs AFS against
+    # accuracy and support for the same run, and recovering it afterwards
+    # would mean rebuilding the model from a checkpoint and a config that
+    # may not have been saved. Costs one batch of deletion curves.
+    audit = {}
+    if not args.no_audit:
+        try:
+            import faithfulness as FA
+            batch = next(iter(loaders["test"]))
+            nf, adj, nm, tok, pl = [
+                b.to(device) if torch.is_tensor(b) else b for b in batch[:5]]
+
+            def predict(drop):
+                with torch.no_grad():
+                    o = model(nf, adj, nm, tok, pl, drop_pairs=drop)
+                return (o["y"] if isinstance(o, dict) else o[0]).squeeze(-1)
+
+            with torch.no_grad():
+                o = model(nf, adj, nm, tok, pl)
+            contrib = o["contrib"] if isinstance(o, dict) else o[1]
+            if contrib.dim() == 3:
+                contrib = contrib.unsqueeze(1)
+            r = FA.audit(predict, contrib, fractions=FA.default_fractions(n=9),
+                         seed=0)
+            drop = torch.zeros_like(contrib, dtype=torch.bool)
+            flat = contrib.reshape(contrib.shape[0], -1)
+            idx = flat.abs().topk(min(5, flat.shape[1]), -1).indices
+            drop.reshape(contrib.shape[0], -1).scatter_(1, idx, True)
+            _, ok, det = FA.check_additive_exactness(predict, contrib, drop)
+            audit = {"afs": float(r["afs"]), "polarity": float(r["polarity"]),
+                     "exact_ok": bool(ok),
+                     "max_residual": float(det["max_residual"]),
+                     "relative_residual": float(det["relative_residual"])}
+            print(f"AUDIT: AFS={audit['afs']:+.4f}  "
+                  f"polarity={audit['polarity']:+.4f}  "
+                  f"exact={'YES' if ok else 'NO'}  "
+                  f"resid={audit['max_residual']:.2e}")
+        except Exception as e:
+            # A failed audit must not cost the training run it followed.
+            audit = {"audit_error": f"{type(e).__name__}: {e}"}
+            print(f"AUDIT FAILED (training result is unaffected): {e}")
+
     pd.DataFrame(history).to_csv(os.path.join(out_dir, "history.csv"), index=False)
+    with open(os.path.join(out_dir, "config_used.json"), "w") as f:
+        json.dump(cfg, f, indent=2)
     with open(os.path.join(out_dir, "test_metrics.json"), "w") as f:
-        json.dump({**test, "best_epoch": best["epoch"], "data": args.data,
+        json.dump({**test, **audit, "best_epoch": best["epoch"],
+                   "data": args.data,
                    "split": args.split, "selection": cfg["IB"]["SELECTION"],
                    "budget_k": cfg["IB"]["BUDGET_K"],
                    "adaptive": cfg["IB"]["ADAPTIVE_BUDGET"],
