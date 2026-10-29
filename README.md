@@ -5,6 +5,30 @@ explanation is the mechanism rather than a description of it.
 
 ---
 
+## Status
+
+Theory and dataset audits are measured and reproducible on CPU in about
+half an hour. Full-scale accuracy runs are in progress: 1 of 5 Davis
+cold-target seeds done, the rest of the 28-run queue running, baselines and
+KIBA not started. `run_davis.py --list` tracks progress.
+
+Anything below labelled demo-scale is not a result and should not be cited.
+
+### First full-scale result
+
+Davis **cold-target** (the regime that tests generalisation to unseen
+proteins), 21,012 training pairs, 50 epochs, single T4, best epoch 17:
+
+| MSE | RMSE | CI | r² | Pearson | Spearman | mean support |
+|---|---|---|---|---|---|---|
+| **0.4855** | 0.6968 | **0.7558** | 0.2563 | 0.5153 | 0.4556 | 82.2 |
+
+Mean support of 82 contacts is 0.5% of the 17,710 candidate pairs, and the
+attribution over those 82 is exact. One seed is not a result; four more are
+running.
+
+---
+
 ## Base paper
 
 This work extends **DrugBAN**:
@@ -126,6 +150,9 @@ install in seconds.
 | `verify_generalization.py` | Rademacher complexity against budget `k` and sample size `n` |
 | `verify_identifiability.py` | Adversarial attention map under a pooled decoder; straight-through gradient alignment |
 | `drugban_upstream/` | DrugBAN's original files, vendored unchanged, for the baseline audit. Needs `dgl` + `dgllife`; nothing else here does |
+| `preflight.py` | Three-minute check that a session is set up correctly, before committing hours to it |
+| `run_davis.py` | The full Davis queue, resumable across session-limited free GPUs |
+| `collect_results.py` | Turns finished runs into summary tables and LaTeX fragments |
 | `notebooks/` | Colab notebook |
 | `figures/` | Generated figures (see below) |
 
@@ -258,9 +285,37 @@ step-function curves would have hidden this entirely.
 
 ---
 
+## Reproducing the full experiments
+
+The Davis queue is 28 runs, roughly 41 GPU-hours on a T4. `run_davis.py`
+skips runs that already have a `test_metrics.json`, so re-running the same
+command in a new session continues rather than restarts.
+
+```bash
+python preflight.py                       # 3 min; do this first
+python download_data.py --datasets davis
+python splits.py --csv datasets/davis/full.csv --out datasets/davis
+python benchmark_split.py --datasets davis
+python run_davis.py --hours 11 --out ./results
+python collect_results.py --out ./results
+python run_davis.py --list --out ./results     # what is left
+```
+
+Split by group across two GPUs with `--only seeds` and
+`--only frontier benchmark scaffold`. In a notebook the whole launch must
+be one line: each `!` runs its own shell, so a `wait` on its own line has
+no children and the session ends, killing both jobs.
+
+Each run writes `test_metrics.json` (with AFS and the exactness residual),
+`history.csv`, `config_used.json` and `best.pt`. Throughput is 176 s/epoch
+on a T4 at full scale.
+
+---
+
 ## Sample results (demo scale — read the caveat)
 
-From `run_experiments.py` with **200 training rows and 4 epochs on CPU**.
+These are **not** the results above. They come from `run_experiments.py`
+with **200 training rows and 4 epochs on CPU**.
 Concordance index sits at 0.47–0.55 across every variant, i.e. **near
 chance**: at this scale nothing is really learning, so none of these
 accuracy numbers mean anything. They are here to show the pipeline runs
@@ -339,13 +394,26 @@ whether or not IB-DTA wins on accuracy.
 ## Known limits
 
 
-1. **Memory.** `IB.CHUNK_Q` bounds the pair decoder; lower it if you OOM.
-   At V=290, Q=1000, D=128, B=64 the dense form needs ~19 GB, `CHUNK_Q=64`
-   needs ~1.2 GB.
+1. **Memory.** `IB.CHUNK_Q` bounds the pair decoder at inference; during
+   training you also need `IB.CHECKPOINT_CHUNKS: true`, which is the
+   default. See finding 5 — the analytic figure is the wrong number to
+   size a GPU against. If you still OOM, lower `CHUNK_Q` or the batch size.
 2. **Baselines must be rerun**, not quoted — published numbers use different
-   splits and preprocessing.
+   splits and preprocessing. Note that no baseline implementation ships in
+   this repo yet, so the controlled-retraining comparison cannot currently
+   be produced from it.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
+4. **Overfitting on Davis.** Training loss keeps falling long after
+   validation turns. On cold-target the best epoch was 17 of 50 and
+   validation MSE rose monotonically from about epoch 23. `SOLVER.PATIENCE`
+   defaults to 12; the reported result is the best checkpoint either way,
+   so early stopping saves roughly an hour per run without changing the
+   answer.
+5. **One seed is not a result.** Several of the numbers quoted above come
+   from a single run. The `run_davis.py` queue exists to replace them with
+   seed-averaged values, and `collect_results.py` marks any cell backed by
+   fewer than five seeds.
 
 ---
 
