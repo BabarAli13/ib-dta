@@ -84,13 +84,13 @@ def main():
     ap.add_argument("--hours", type=float, default=11.0,
                     help="stop launching new runs after this long")
     ap.add_argument("--out", default="./result")
-    ap.add_argument("--only", default=None,
-                    help="seeds | scaffold | frontier | benchmark")
+    ap.add_argument("--only", nargs="*", default=None,
+                    help="one or more of: seeds scaffold frontier benchmark")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--epochs", type=int, default=None)
     args = ap.parse_args()
 
-    q = [r for r in queue() if args.only in (None, r[0])]
+    q = [r for r in queue() if not args.only or r[0] in args.only]
 
     if args.list:
         pend = 0
