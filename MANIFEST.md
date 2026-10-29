@@ -18,13 +18,22 @@ ib-dta/
 ├── train_ib.py                training entry point
 ├── run_experiments.py         E0-E6 suite -> figures/ + results/
 │
+├── benchmark_split.py         canonical DeepDTA fold protocol
+├── design.py                  matched molecular pairs + counterfactual eval
+│
 ├── test_ib.py                 8 property tests (run this first)
 ├── verify_numpy.py            independent NumPy cross-check
+├── verify_theory.py           propositions 1-9
+├── verify_generalization.py   capacity vs budget and sample size
+├── verify_identifiability.py  adversarial map under a pooled decoder
 ├── tools_temp_sweep.py        entmax sparsity diagnostic
 │
 ├── configs/
 │   ├── IBDTA.yaml             regression (pKd)
 │   └── IBDTA_cls.yaml         binary DTI
+│
+├── drugban_upstream/          DrugBAN's own files, vendored unchanged
+│                              (needs dgl + dgllife; only for the baseline audit)
 │
 ├── notebooks/
 │   └── IB_DTA_Colab.ipynb     upload + run, ~10-15 min on free CPU

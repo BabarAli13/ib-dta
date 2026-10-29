@@ -31,6 +31,12 @@ IB:
   DROPOUT: 0.1
   CHUNK_Q: 64             # residues per chunk in the pair decoder; 0 = no chunking
                           # keeps peak memory bounded on long proteins
+  CHECKPOINT_CHUNKS: true # recompute each chunk in backward instead of
+                          # storing it. Without this, chunking bounds
+                          # INFERENCE memory only: autograd keeps every
+                          # chunk alive and training peak returns to the
+                          # unchunked total. Costs one extra forward over
+                          # the pair MLP. Set false only if memory is ample.
 
 TASK:
   NAME: classification

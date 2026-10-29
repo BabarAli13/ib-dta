@@ -80,7 +80,8 @@ class IBDTA(nn.Module):
             selection=ib["SELECTION"], budget_k=ib["BUDGET_K"],
             adaptive_budget=ib["ADAPTIVE_BUDGET"],
             out_dim=1, dropout=ib["DROPOUT"],
-            chunk_q=ib.get("CHUNK_Q", 0))
+            chunk_q=ib.get("CHUNK_Q", 0),
+            checkpoint_chunks=ib.get("CHECKPOINT_CHUNKS", True))
 
     # ---- forward ---------------------------------------------------------
     def forward(self, node_feats, adj, node_mask, tokens, lengths=None,

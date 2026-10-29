@@ -76,16 +76,29 @@ def apply():
     Requires DrugBAN's upstream ban.py / models.py on the path, which in
     turn require dgl + dgllife. Raises a clear error if they are missing
     rather than failing at import time.
+
+    The upstream files live in drugban_upstream/, which is not a package
+    and is therefore not importable by default. We put it on sys.path here
+    so that `import ban` resolves without the caller having to.
     """
     if _ORIGINAL:
         return
+    import os
+    import sys
+    vendored = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "drugban_upstream")
+    if os.path.isdir(vendored) and vendored not in sys.path:
+        sys.path.insert(0, vendored)
     try:
         import ban
         import models
     except ImportError as e:
         raise ImportError(
-            "patch_ban needs DrugBAN's upstream ban.py and models.py, which "
-            "require dgl + dgllife:\n"
+            f"patch_ban could not import DrugBAN's ban.py / models.py.\n"
+            f"Looked in: {vendored}\n"
+            f"Underlying error: {e}\n"
+            "If the files are present, the cause is usually the missing "
+            "dgl + dgllife dependency:\n"
             "    pip install dgl dgllife\n"
             "Only needed to audit DrugBAN itself; IB-DTA's own audit works "
             "without them.") from e

@@ -79,6 +79,23 @@ python train_ib.py --cfg configs/IBDTA.yaml --data davis --split cold_target
 python run_experiments.py --quick                  # figures/ + results/
 ```
 
+To reproduce the theory table without training anything, on CPU in about
+half an hour:
+
+```bash
+python verify_theory.py            # propositions 1-9
+python verify_generalization.py    # capacity vs budget and sample size
+python verify_identifiability.py   # adversarial map under a pooled decoder
+```
+
+For numbers comparable with published Davis and KIBA tables, build the
+canonical folds first and train against them:
+
+```bash
+python benchmark_split.py --datasets davis kiba
+python train_ib.py --cfg configs/IBDTA.yaml --data davis --split benchmark/fold0
+```
+
 No `dgl` required — the default encoders are plain PyTorch. That removes the
 dependency most likely to break a reproduction, and makes the Colab notebook
 install in seconds.
@@ -101,8 +118,14 @@ install in seconds.
 | `download_data.py` | Davis, KIBA, BindingDB, BioSNAP, Human into one schema |
 | `train_ib.py` | Training entry point |
 | `run_experiments.py` | E0–E6 suite → `figures/`, `results/` |
+| `benchmark_split.py` | Canonical DeepDTA fold protocol: 6 parts, 1 held out, 5-fold CV over the rest. Use this for numbers comparable with published tables |
+| `design.py` | Matched molecular pairs via Bemis–Murcko scaffolds + MCS, atom-level attribution, counterfactual swap evaluation |
 | `test_ib.py` | Property tests |
 | `verify_numpy.py` | Independent NumPy cross-check of the core maths |
+| `verify_theory.py` | Propositions 1–9: exactness, Shapley identity, marginals, composition |
+| `verify_generalization.py` | Rademacher complexity against budget `k` and sample size `n` |
+| `verify_identifiability.py` | Adversarial attention map under a pooled decoder; straight-through gradient alignment |
+| `drugban_upstream/` | DrugBAN's original files, vendored unchanged, for the baseline audit. Needs `dgl` + `dgllife`; nothing else here does |
 | `notebooks/` | Colab notebook |
 | `figures/` | Generated figures (see below) |
 
@@ -126,7 +149,7 @@ install in seconds.
 
 ---
 
-## Three findings from building this
+## Findings from building this
 
 **1. Two bugs that pass the obvious tests.**
 α-entmax's bisection was inverted (`s(τ)` decreases in τ, so `s < 1` must
@@ -186,7 +209,30 @@ redundancy was noticed. Use KIBA for a meaningful scaffold evaluation:
 regimes on Davis as if they were independent evidence would be
 double-counting.
 
-**5. The deletion test alone does not separate the two architectures.**
+**5. Chunking bounds inference memory, not training memory.**
+`_pair_contributions` splits the pair decode over the residue axis, which
+caps the live working set at `B x H x V x chunk x 2D`. Under autograd that
+cap does not hold: every chunk's activations stay alive until backward, so
+they add back up to the unchunked total. Measured at V=290, Q=1200, D=128,
+B=4: **0.77 GB** with `no_grad` against **4.14 GB** with gradients. The
+analytic figure describes inference and is the wrong number to size a GPU
+against.
+
+`IB.CHECKPOINT_CHUNKS` (default `true`) recomputes each chunk during
+backward instead of storing it. That restores the bound during training for
+one extra forward pass over the pair MLP:
+
+| batch | checkpointing off | on |
+|---|---|---|
+| 4 | 4.14 GB | **1.05 GB** |
+| 32 (default) | out of memory at 7 GB | **3.24 GB** |
+
+Loss and summed parameter gradients are unchanged to ten and eight
+significant figures, so this is exact, not an approximation. Without it the
+default `BATCH_SIZE: 32` needs roughly 30 GB and will only fit on an A100
+40GB or larger; with it the same config trains on a 12 GB card.
+
+**6. The deletion test alone does not separate the two architectures.**
 This one revised the research framing, and it only appeared once the
 deletion fractions were log-spaced rather than linear.
 
