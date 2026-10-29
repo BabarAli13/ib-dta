@@ -209,6 +209,18 @@ def main():
             if cfg["RESULT"]["SAVE_MODEL"]:
                 torch.save(model.state_dict(), os.path.join(out_dir, "best.pt"))
 
+        # Early stopping. The reported result is always the best checkpoint,
+        # so stopping early can only change the answer if the run would have
+        # improved after `patience` further epochs. On Davis cold_target the
+        # best epoch was 17 of 50 and validation MSE rose monotonically after
+        # roughly epoch 23, so the remaining epochs were pure cost.
+        # PATIENCE: 0 restores the old behaviour of always running MAX_EPOCH.
+        patience = int(cfg["SOLVER"].get("PATIENCE", 0))
+        if patience and epoch - best["epoch"] >= patience:
+            print(f"  early stop: no improvement for {patience} epochs "
+                  f"(best was epoch {best['epoch']})")
+            break
+
     ckpt = os.path.join(out_dir, "best.pt")
     if os.path.exists(ckpt):
         model.load_state_dict(torch.load(ckpt, map_location=device))
