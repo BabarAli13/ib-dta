@@ -8,24 +8,41 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. Full-scale accuracy runs are in progress: 1 of 5 Davis
-cold-target seeds done, the rest of the 28-run queue running, baselines and
-KIBA not started. `run_davis.py --list` tracks progress.
+half an hour. Full-scale accuracy runs are in progress: **13 of 40**, with
+cold-target complete at five seeds. Baselines and KIBA have not started.
+`run_davis.py --list` tracks progress.
 
 Anything below labelled demo-scale is not a result and should not be cited.
 
-### First full-scale result
+### Measured so far
 
-Davis **cold-target** (the regime that tests generalisation to unseen
-proteins), 21,012 training pairs, 50 epochs, single T4, best epoch 17:
+Davis, full scale, five seeds for cold-target and two for cold-drug:
 
-| MSE | RMSE | CI | r² | Pearson | Spearman | mean support |
-|---|---|---|---|---|---|---|
-| **0.4855** | 0.6968 | **0.7558** | 0.2563 | 0.5153 | 0.4556 | 82.2 |
+| Split | MSE | CI | r² | mean support |
+|---|---|---|---|---|
+| **cold-target** | **0.4846 ± 0.0429** | **0.7640 ± 0.0144** | 0.258 | 48 |
+| cold-drug | 0.718 ± 0.113 | 0.638 ± 0.019 | −0.10 | 50 |
 
-Mean support of 82 contacts is 0.5% of the 17,710 candidate pairs, and the
-attribution over those 82 is exact. One seed is not a result; four more are
-running.
+Mean support of 48 contacts is 0.3% of the 17,710 candidate pairs, and the
+attribution over those 48 is exact.
+
+**Attribution holds in every run.** Across all 13: `exact_ok` true, worst
+relative residual `1.6e-07`, AFS between `+0.68` and `+0.79`, polarity
+exactly `1.0`. Every budget, every split, every seed.
+
+**Cold-drug is a negative result, not a bug.** r² at or below zero means
+the model does no better than predicting the mean, and early stopping fired
+at epochs 1 and 5. The model generalises to unseen targets and not to
+unseen drugs. Davis has 68 compounds, so holding out 14 leaves 54 to learn
+chemistry from. The scaffold split uses a byte-identical partition to
+cold-drug here, and the two runs landed 0.34 MSE apart, which is a measure
+of how unstable this regime is rather than a difference between regimes.
+
+**The budget sweep is not yet conclusive.** At one seed per budget the
+curve from k=2 to k=32 spans 0.116 MSE while seed-to-seed sd is 0.043, so
+it is 2.7 sd wide end to end and not monotone (k=8 was the worst point).
+Each budget and the dense control now run at three seeds; until those land,
+treat the sweep as provisional.
 
 ---
 
@@ -287,7 +304,9 @@ step-function curves would have hidden this entirely.
 
 ## Reproducing the full experiments
 
-The Davis queue is 28 runs, roughly 41 GPU-hours on a T4. `run_davis.py`
+The Davis queue is 40 runs: three split regimes at five seeds (three
+for random), one scaffold run, a seven-point budget sweep at three seeds,
+and five canonical folds. Roughly 100 GPU-hours on a T4. `run_davis.py`
 skips runs that already have a `test_metrics.json`, so re-running the same
 command in a new session continues rather than restarts.
 
