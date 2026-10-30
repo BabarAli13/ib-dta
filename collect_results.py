@@ -64,7 +64,11 @@ def main():
     print(f"  {len(df)} run(s) -> {dest}\n")
 
     # Seed-averaged table, the one the headline numbers come from.
-    seeded = df[df["run"].str.contains("seed")]
+    # Frontier runs are tagged topk8_seed7 and so on, so a bare "seed"
+    # match pulls them into the split-regime table and inflates the
+    # cold_target count with runs that are not the default configuration.
+    seeded = df[df["run"].str.contains("seed")
+                & ~df["run"].str.contains("topk|dense")]
     if not seeded.empty and "split" in seeded.columns:
         g = seeded.groupby("split")[["mse", "ci"]].agg(["mean", "std", "count"])
         print("  split regimes (mean +/- sd over seeds)")
