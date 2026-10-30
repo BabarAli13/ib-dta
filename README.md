@@ -8,41 +8,73 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. Full-scale accuracy runs are in progress: **13 of 40**, with
-cold-target complete at five seeds. Baselines and KIBA have not started.
-`run_davis.py --list` tracks progress.
+half an hour. Full-scale accuracy runs are in progress: **23 of 40**.
+Baselines and KIBA have not started. `run_davis.py --list` tracks progress.
 
 Anything below labelled demo-scale is not a result and should not be cited.
 
-### Measured so far
+### Split regimes
 
-Davis, full scale, five seeds for cold-target and two for cold-drug:
+Davis, full scale, default configuration (adaptive entmax):
 
-| Split | MSE | CI | r² | mean support |
+| Split | MSE | CI | r² | seeds |
 |---|---|---|---|---|
-| **cold-target** | **0.4846 ± 0.0429** | **0.7640 ± 0.0144** | 0.258 | 48 |
-| cold-drug | 0.718 ± 0.113 | 0.638 ± 0.019 | −0.10 | 50 |
+| random | 0.3335 ± 0.0280 | 0.8493 ± 0.0127 | +0.58 | 2 |
+| **cold-target** | **0.4846 ± 0.0429** | **0.7640 ± 0.0144** | +0.26 | 5 |
+| cold-drug | 0.7563 ± 0.1652 | 0.6435 ± 0.0417 | −0.16 | 5 |
+| scaffold | 1.1399 | 0.5973 | −0.75 | 1 |
 
-Mean support of 48 contacts is 0.3% of the 17,710 candidate pairs, and the
-attribution over those 48 is exact.
+### The frontier is flat
 
-**Attribution holds in every run.** Across all 13: `exact_ok` true, worst
-relative residual `1.6e-07`, AFS between `+0.68` and `+0.79`, polarity
-exactly `1.0`. Every budget, every split, every seed.
+Cold-target, top-k against the dense control:
 
-**Cold-drug is a negative result, not a bug.** r² at or below zero means
-the model does no better than predicting the mean, and early stopping fired
-at epochs 1 and 5. The model generalises to unseen targets and not to
-unseen drugs. Davis has 68 compounds, so holding out 14 leaves 54 to learn
-chemistry from. The scaffold split uses a byte-identical partition to
-cold-drug here, and the two runs landed 0.34 MSE apart, which is a measure
-of how unstable this regime is rather than a difference between regimes.
+| k | support | MSE | vs dense |
+|---|---|---|---|
+| 2 | 2 | 0.5101 ± 0.0331 | +0.056 |
+| 4 | 4 | 0.4876 ± 0.0373 | +0.034 |
+| 8 | 8 | 0.5150 ± 0.0665 | +0.061 |
+| 16 | 16 | 0.5026 | +0.049 |
+| 32 | 32 | **0.4462** | **−0.008** |
+| 64 | 64 | 0.5105 | +0.057 |
+| dense | **21,012** | 0.4539 | — |
 
-**The budget sweep is not yet conclusive.** At one seed per budget the
-curve from k=2 to k=32 spans 0.116 MSE while seed-to-seed sd is 0.043, so
-it is 2.7 sd wide end to end and not monotone (k=8 was the worst point).
-Each budget and the dense control now run at three seeds; until those land,
-treat the sweep as provisional.
+The sweep spans 0.069 MSE end to end. The seed spread *within* one budget
+reaches 0.067. Those are the same size, so no budget is distinguishable
+from dense at these seed counts, **k=2 included: two contacts out of
+21,012, a 10,506x reduction**.
+
+Seed replicates are what established this. At one seed, k=8 looked like
+the worst point of the sweep (0.5621); its second seed gave 0.4679. That
+0.094 swing is larger than the entire range across budgets, so the knee
+visible in single-seed data was noise. Earlier revisions of this file
+described a knee at k=8; that description was wrong and is withdrawn.
+
+Still provisional: the dense control and k=16, 32, 64 have one seed each.
+
+### Attribution
+
+Across all 23 runs: `exact_ok` true, worst relative residual `1.6e-07`,
+AFS between `+0.683` and `+0.792`, polarity exactly `1.0`. Every budget,
+every split, every seed.
+
+Note that the dense control is softmax selection with the **additive**
+decoder, so it satisfies exactness too (residual `5.5e-08`). Exactness is
+a property of the decoder, not of the selection. Demonstrating that a
+pooled decoder violates it needs a genuinely pooled comparator, which
+means the baselines, which have not been run.
+
+### Cold-drug is a negative result, not a bug
+
+r² per seed: −0.577, −0.227, −0.069, +0.019, +0.038. At or below zero
+means the model does no better than predicting the mean, and early
+stopping fired as early as epoch 1. The model generalises to unseen
+targets and not to unseen drugs. Davis has 68 compounds, so holding out 14
+leaves 54 to learn chemistry from.
+
+The scaffold split uses a byte-identical partition to cold-drug here, so
+it is not independent evidence. The two runs landed 0.34 MSE apart, which
+measures the instability of this regime rather than a difference between
+regimes.
 
 ---
 
@@ -353,7 +385,10 @@ vs 12,480) costs essentially nothing in MSE here. That is the frontier
 question the research plan is built around. At this subset size it is a
 hint, not evidence.
 
-The budget sweep shows the same shape and locates the knee:
+The budget sweep at this scale appeared to locate a knee. **Full-scale
+measurement contradicts it** — see "The frontier is flat" above, where the
+k=8 point moved by 0.094 MSE between two seeds. The table is kept only to
+show the sweep runs end to end:
 
 | budget k | MSE | AFS | support | deletion residual |
 |---|---|---|---|---|
@@ -363,9 +398,15 @@ The budget sweep shows the same shape and locates the knee:
 | 16 | 1.063 | +0.757 | 16.0 | `8.3e-07` |
 | *dense softmax* | *1.061* | *+0.739* | *12,480.7* | *violates the bound* |
 
-MSE falls to k=8 and then flattens at the dense model's level. **Eight
-contacts match twelve thousand** — while the dense model cannot state what
-any one of them is worth. Exactness holds at every budget.
+At full scale there is no knee: every budget from k=2 upward is
+indistinguishable from dense. Exactness holds at every budget here and in
+all 23 full-scale runs.
+
+The "violates the bound" note on the dense row above refers to a pooled
+decoder. Do not read it as a property of dense *selection*: the full-scale
+dense control is softmax selection with the additive decoder and it
+satisfies exactness (residual `5.5e-08`). Exactness is a property of the
+decoder, not of the selection.
 
 Caveat worth repeating: at CI ≈ 0.5 none of these models are learning, so
 treat this as a demonstration that the sweep runs and produces the right
