@@ -13,6 +13,7 @@ import argparse
 import glob
 import json
 import os
+import sys
 
 import pandas as pd
 
@@ -29,7 +30,16 @@ def load(out):
             continue
         d["run"] = os.path.basename(os.path.dirname(p))
         rows.append(d)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # A run interrupted and resumed, or written by an older version, can
+    # leave a numeric field as a string. Coerce rather than crash on the
+    # first groupby.
+    for c in ("mse", "rmse", "ci", "r2", "pearson", "spearman", "support",
+              "afs", "polarity", "relative_residual", "max_residual",
+              "best_epoch", "budget_k", "params"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+    return df
 
 
 def main():
@@ -77,16 +87,33 @@ def main():
         open(p, "w").write("\n".join(lines) + "\n")
         print(f"  wrote {p}")
 
-    # Budget sweep, for the frontier figure.
+    # Budget sweep, for the frontier figure. Averaged over seeds, because a
+    # single-seed curve spans only a couple of standard deviations end to
+    # end and its shape cannot be told apart from noise.
     front = df[df["run"].str.contains("topk|dense")]
     if not front.empty:
         p = os.path.join(args.dest, "frontier_measured.csv")
         front.to_csv(p, index=False)
         print(f"  wrote {p}")
+        if "budget_k" in front.columns and "selection" in front.columns:
+            fg = front.groupby(["selection", "budget_k"])[
+                ["mse", "ci", "afs", "support"]].agg(["mean", "std", "count"])
+            print("\n  frontier (mean +/- sd over seeds)")
+            print(fg.to_string())
+            thin = fg[("mse", "count")].min()
+            if thin < 3:
+                print(f"\n  WARNING: some budgets have only {int(thin)} seed(s). "
+                      f"Seed-to-seed sd on this split is around 0.04 MSE, so "
+                      f"the shape of the curve is not yet separable from noise.")
 
-    expected = 28
-    if len(df) < expected:
-        print(f"\n  {expected - len(df)} run(s) still missing. "
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from run_davis import queue
+        expected = len(queue())
+    except Exception:
+        expected = None
+    if expected and len(df) < expected:
+        print(f"\n  {expected - len(df)} of {expected} run(s) still missing. "
               f"`python run_davis.py --list --out {args.out}` shows which.")
 
 

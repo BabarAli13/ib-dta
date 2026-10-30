@@ -35,26 +35,43 @@ import time
 
 CFG = "configs/IBDTA.yaml"
 SEEDS = [2048, 7, 13, 101, 999]
+# Budgets and the dense control get FRONTIER_SEEDS each. One seed per point
+# is not enough: measured on cold_target, seed-to-seed sd is 0.043 MSE while
+# the whole sweep from k=2 to k=32 spans 0.116, so a single-seed curve is
+# 2.7 sd wide end to end and its shape cannot be distinguished from noise.
+FRONTIER_SEEDS = SEEDS[:3]
+# random carries none of the claims and is reported only for comparability
+# with published work, so it gets fewer seeds than the cold regimes.
+RANDOM_SEEDS = SEEDS[:3]
+
+
+def _tag(prefix, seed):
+    """Seed 2048 keeps the bare tag so runs finished before seeds were
+    added to the sweep are still recognised and not repeated."""
+    return prefix if seed == SEEDS[0] else f"{prefix}_seed{seed}"
 
 
 def queue():
     """(group, tag, split, [cfg overrides]) in the order worth running."""
     q = []
-    # Headline: the two regimes that carry the claims, then random for
-    # comparability with published work.
+    # Headline: the two regimes that carry the claims, then random.
     for split in ("cold_target", "cold_drug", "random"):
-        for s in SEEDS:
+        for s in (RANDOM_SEEDS if split == "random" else SEEDS):
             q.append(("seeds", f"seed{s}", split, ["SOLVER.SEED", str(s)]))
-    # Scaffold is redundant on Davis; one run documents that.
+    # Scaffold uses a byte-identical split to cold_drug on Davis, since all
+    # 68 compounds have distinct Bemis-Murcko scaffolds. One run documents
+    # that; more would be duplication.
     q.append(("scaffold", f"seed{SEEDS[0]}", "scaffold",
               ["SOLVER.SEED", str(SEEDS[0])]))
-    # Frontier: hard budgets, then the dense control.
-    for k in (2, 4, 8, 16, 32, 64):
-        q.append(("frontier", f"topk{k}", "cold_target",
-                  ["IB.SELECTION", "topk", "IB.BUDGET_K", str(k),
-                   "IB.ADAPTIVE_BUDGET", "false", "SOLVER.SEED", str(SEEDS[0])]))
-    q.append(("frontier", "dense", "cold_target",
-              ["IB.SELECTION", "softmax", "SOLVER.SEED", str(SEEDS[0])]))
+    # Frontier: budgets first at the primary seed so the curve appears
+    # early, then the replicate seeds.
+    for s in FRONTIER_SEEDS:
+        for k in (2, 4, 8, 16, 32, 64):
+            q.append(("frontier", _tag(f"topk{k}", s), "cold_target",
+                      ["IB.SELECTION", "topk", "IB.BUDGET_K", str(k),
+                       "IB.ADAPTIVE_BUDGET", "false", "SOLVER.SEED", str(s)]))
+        q.append(("frontier", _tag("dense", s), "cold_target",
+                  ["IB.SELECTION", "softmax", "SOLVER.SEED", str(s)]))
     # Canonical folds.
     for f in range(5):
         q.append(("benchmark", f"seed{SEEDS[0]}", f"benchmark/fold{f}",
