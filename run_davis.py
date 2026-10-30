@@ -82,7 +82,11 @@ def is_done(out, split, tag):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--hours", type=float, default=11.0,
-                    help="stop launching new runs after this long")
+                    help="session budget; no run is started that is not "
+                         "expected to finish within it")
+    ap.add_argument("--est", type=float, default=2.5,
+                    help="hours to assume a run takes until one has been "
+                         "measured in this session")
     ap.add_argument("--out", default="./result")
     ap.add_argument("--only", nargs="*", default=None,
                     help="one or more of: seeds scaffold frontier benchmark")
@@ -117,13 +121,28 @@ def main():
 
     deadline = time.time() + args.hours * 3600
     ran = skipped = 0
+    # A run that starts just under the deadline still takes its full hour or
+    # two, which is how a session overshoots its host's hard cap and gets
+    # killed mid-run, wasting that run entirely. So refuse to start a run
+    # that is not expected to finish in time. The estimate starts at
+    # args.est and is replaced by this session's own measured mean as soon
+    # as one run completes.
+    est = args.est * 3600
+    durations = []
     for group, tag, split, over in q:
         if is_done(args.out, split, tag):
             skipped += 1
             continue
-        if time.time() > deadline:
+        left = deadline - time.time()
+        if left <= 0:
             print(f"\n  session budget reached. {ran} run(s) this session.")
             print("  start a new session and run the same command to resume.")
+            break
+        if left < est:
+            print(f"\n  {left / 60:.0f} min left, a run needs about "
+                  f"{est / 60:.0f} min. Stopping here rather than starting "
+                  f"one that would be killed mid-run.")
+            print(f"  {ran} run(s) this session. Resume with the same command.")
             break
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG,
                "--data", "davis", "--split", split, "--tag", tag,
@@ -140,7 +159,14 @@ def main():
             print(f"  FAILED (exit {r.returncode}); continuing", flush=True)
             continue
         ran += 1
-        print(f"  finished in {(time.time() - t0) / 60:.1f} min", flush=True)
+        dt = time.time() - t0
+        durations.append(dt)
+        # Use the slowest run seen, not the mean: underestimating is what
+        # gets a run killed, and the budget sweep's small-k runs finish much
+        # faster than a full-support one.
+        est = max(durations)
+        print(f"  finished in {dt / 60:.1f} min "
+              f"(estimate for the next run: {est / 60:.0f} min)", flush=True)
     else:
         print(f"\n  queue complete. {ran} run(s) this session, "
               f"{skipped} already done.")
