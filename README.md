@@ -8,7 +8,7 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. Full-scale accuracy runs are in progress: **29 of 40**.
+half an hour. Full-scale accuracy runs are in progress: **37 of 40**.
 Baselines and KIBA have not started. `run_davis.py --list` tracks progress.
 
 Anything below labelled demo-scale is not a result and should not be cited.
@@ -24,42 +24,54 @@ Davis, full scale, default configuration (adaptive entmax):
 | cold-drug | 0.7563 ± 0.1652 | 0.6435 ± 0.0417 | −0.16 | 5 |
 | scaffold | 1.1399 | 0.5973 | −0.75 | 1 |
 
-### The frontier is flat
+### Sparsity has no measurable accuracy cost
 
-Cold-target, top-k against the dense control, two seeds per point (three
-at k=2):
+Cold-target, top-k against the dense control, three seeds per budget:
 
-| k | support | MSE | vs dense | reduction |
+| k | support | MSE | vs dense | p (Welch) |
 |---|---|---|---|---|
-| 2 | 2 | 0.5081 ± 0.0236 | +0.024 | 10,506x |
-| 4 | 4 | 0.4876 ± 0.0373 | +0.003 | 5,253x |
-| 8 | 8 | 0.5150 ± 0.0665 | +0.031 | 2,626x |
-| 16 | 16 | 0.4787 ± 0.0338 | −0.006 | 1,313x |
-| **32** | 32 | **0.4647 ± 0.0261** | **−0.020** | 657x |
-| 64 | 64 | 0.4830 ± 0.0389 | −0.002 | 328x |
+| 2 | 2 | 0.5081 ± 0.0236 | +0.024 | 0.58 |
+| 4 | 4 | 0.4924 ± 0.0277 | +0.008 | 0.85 |
+| 8 | 8 | 0.4905 ± 0.0633 | +0.006 | 0.91 |
+| 16 | 16 | 0.4891 ± 0.0299 | +0.005 | 0.91 |
+| **32** | 32 | **0.4663 ± 0.0187** | −0.018 | 0.66 |
+| 64 | 64 | 0.4725 ± 0.0329 | −0.012 | 0.78 |
 | dense | **21,012** | 0.4845 ± 0.0433 | — | — |
 
-Dense ranks **4th of 7**. Every budget is within 0.031 MSE of it, while
-dense's own seed-to-seed sd is 0.043: the budgets differ from dense by
-less than dense differs from itself, and three of them beat it. Sparsity
-costs nothing here, down to **k=2, two contacts out of 21,012**.
+**No budget differs significantly from dense, k=2 included: two contacts
+against twenty-one thousand.** Dense ranks 3rd of 7, and two budgets beat
+it numerically.
 
-Seed replicates were what established this. At one seed k=8 looked like
-the worst point of the sweep (0.5621); its second seed gave 0.4679, a
-swing larger than the whole range across budgets. Earlier revisions of
-this file described a knee at k=8; that description came from single-seed
-data, was wrong, and is withdrawn.
+Read this as a bound rather than as a flat curve. The ordering of the
+means does run monotonically with k, and a Spearman test on those six
+means returns ρ = −0.943, p = 0.005. That test is the wrong one: it treats
+each mean as a single observation and discards the sd ≈ 0.036 each one
+carries. Regressing the 18 individual runs on log₂k gives a slope of
+−0.0074 per doubling with p = 0.110 and a confidence interval spanning
+zero. The total effect across a 32-fold range of k is 0.037 MSE against a
+within-budget sd of 0.036, so three seeds cannot resolve it either way.
+
+The claim the data supports: **any accuracy cost of reducing the support
+from 21,012 contacts to 2 is below about 0.05 MSE.** Resolving whether the
+true effect is zero or merely small would need roughly 15 seeds per
+budget, about 90 runs, for a result that would still read "small".
+
+Earlier revisions of this file described a knee at k=8. That came from
+single-seed data: k=8 measured 0.5621 at one seed and 0.4416 at another, a
+swing larger than the entire range across budgets. The knee was noise and
+the description is withdrawn.
 
 ### Attribution
 
-Across all 29 runs: `exact_ok` true, worst relative residual `1.8e-07`,
+Across all 34 runs visible to the collector: `exact_ok` true, worst
+relative residual `1.8e-07`,
 AFS between `+0.683` and `+0.792`.
 
 **Polarity separates sparse from dense with no overlap.**
 
 | selection | runs | polarity |
 |---|---|---|
-| entmax / top-k | 27 | exactly `1.0`, every run |
+| entmax / top-k | 32 | exactly `1.0`, every run |
 | dense softmax | 2 | `0.999999996`, `0.999998548` |
 
 Polarity is `(AUC_most - AUC_least) / max(...)`, so it reaches exactly 1
