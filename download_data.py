@@ -180,9 +180,14 @@ def main():
         else:
             fetch_drugban(n, args.out, subset=args.subset)
 
+    # Name the dataset that was actually fetched, not always davis: the
+    # hint printed after `--datasets kiba` told you to split davis.
     print("\nDone. Next:")
-    print(f"  python splits.py --csv {args.out}/davis/full.csv --out {args.out}/davis")
-    print(f"  python train_ib.py --cfg configs/IBDTA.yaml --data davis --split cold_target")
+    for n in names:
+        print(f"  python splits.py --csv {args.out}/{n}/full.csv "
+              f"--out {args.out}/{n}")
+        print(f"  python train_ib.py --cfg configs/IBDTA.yaml "
+              f"--data {n} --split cold_target")
 
 
 if __name__ == "__main__":
