@@ -8,7 +8,7 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. Full-scale accuracy runs are in progress: **23 of 40**.
+half an hour. Full-scale accuracy runs are in progress: **29 of 40**.
 Baselines and KIBA have not started. `run_davis.py --list` tracks progress.
 
 Anything below labelled demo-scale is not a result and should not be cited.
@@ -19,49 +19,65 @@ Davis, full scale, default configuration (adaptive entmax):
 
 | Split | MSE | CI | r² | seeds |
 |---|---|---|---|---|
-| random | 0.3335 ± 0.0280 | 0.8493 ± 0.0127 | +0.58 | 2 |
+| random | 0.3395 ± 0.0223 | 0.8464 ± 0.0102 | +0.57 | 3 |
 | **cold-target** | **0.4846 ± 0.0429** | **0.7640 ± 0.0144** | +0.26 | 5 |
 | cold-drug | 0.7563 ± 0.1652 | 0.6435 ± 0.0417 | −0.16 | 5 |
 | scaffold | 1.1399 | 0.5973 | −0.75 | 1 |
 
 ### The frontier is flat
 
-Cold-target, top-k against the dense control:
+Cold-target, top-k against the dense control, two seeds per point (three
+at k=2):
 
-| k | support | MSE | vs dense |
-|---|---|---|---|
-| 2 | 2 | 0.5101 ± 0.0331 | +0.056 |
-| 4 | 4 | 0.4876 ± 0.0373 | +0.034 |
-| 8 | 8 | 0.5150 ± 0.0665 | +0.061 |
-| 16 | 16 | 0.5026 | +0.049 |
-| 32 | 32 | **0.4462** | **−0.008** |
-| 64 | 64 | 0.5105 | +0.057 |
-| dense | **21,012** | 0.4539 | — |
+| k | support | MSE | vs dense | reduction |
+|---|---|---|---|---|
+| 2 | 2 | 0.5081 ± 0.0236 | +0.024 | 10,506x |
+| 4 | 4 | 0.4876 ± 0.0373 | +0.003 | 5,253x |
+| 8 | 8 | 0.5150 ± 0.0665 | +0.031 | 2,626x |
+| 16 | 16 | 0.4787 ± 0.0338 | −0.006 | 1,313x |
+| **32** | 32 | **0.4647 ± 0.0261** | **−0.020** | 657x |
+| 64 | 64 | 0.4830 ± 0.0389 | −0.002 | 328x |
+| dense | **21,012** | 0.4845 ± 0.0433 | — | — |
 
-The sweep spans 0.069 MSE end to end. The seed spread *within* one budget
-reaches 0.067. Those are the same size, so no budget is distinguishable
-from dense at these seed counts, **k=2 included: two contacts out of
-21,012, a 10,506x reduction**.
+Dense ranks **4th of 7**. Every budget is within 0.031 MSE of it, while
+dense's own seed-to-seed sd is 0.043: the budgets differ from dense by
+less than dense differs from itself, and three of them beat it. Sparsity
+costs nothing here, down to **k=2, two contacts out of 21,012**.
 
-Seed replicates are what established this. At one seed, k=8 looked like
-the worst point of the sweep (0.5621); its second seed gave 0.4679. That
-0.094 swing is larger than the entire range across budgets, so the knee
-visible in single-seed data was noise. Earlier revisions of this file
-described a knee at k=8; that description was wrong and is withdrawn.
-
-Still provisional: the dense control and k=16, 32, 64 have one seed each.
+Seed replicates were what established this. At one seed k=8 looked like
+the worst point of the sweep (0.5621); its second seed gave 0.4679, a
+swing larger than the whole range across budgets. Earlier revisions of
+this file described a knee at k=8; that description came from single-seed
+data, was wrong, and is withdrawn.
 
 ### Attribution
 
-Across all 23 runs: `exact_ok` true, worst relative residual `1.6e-07`,
-AFS between `+0.683` and `+0.792`, polarity exactly `1.0`. Every budget,
-every split, every seed.
+Across all 29 runs: `exact_ok` true, worst relative residual `1.8e-07`,
+AFS between `+0.683` and `+0.792`.
+
+**Polarity separates sparse from dense with no overlap.**
+
+| selection | runs | polarity |
+|---|---|---|
+| entmax / top-k | 27 | exactly `1.0`, every run |
+| dense softmax | 2 | `0.999999996`, `0.999998548` |
+
+Polarity is `(AUC_most - AUC_least) / max(...)`, so it reaches exactly 1
+only when deleting the *least* important contacts moves the prediction by
+precisely zero. That requires those contacts to contribute exactly zero,
+which is what α-entmax and top-k give and softmax structurally cannot.
+The deletion audit detects the exact-zero property directly, rather than
+inferring it from small weights.
+
+Five top-k runs report a relative residual of exactly `0.0`. Those are the
+k=2 and k=4 runs, where deleting the top five contacts deletes the whole
+support.
 
 Note that the dense control is softmax selection with the **additive**
-decoder, so it satisfies exactness too (residual `5.5e-08`). Exactness is
-a property of the decoder, not of the selection. Demonstrating that a
-pooled decoder violates it needs a genuinely pooled comparator, which
-means the baselines, which have not been run.
+decoder, so it satisfies exactness too. Exactness is a property of the
+decoder, not of the selection. Demonstrating that a pooled decoder
+violates it needs a genuinely pooled comparator, which means the
+baselines, which have not been run.
 
 ### Cold-drug is a negative result, not a bug
 
