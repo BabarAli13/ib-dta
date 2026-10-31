@@ -20,15 +20,21 @@ import pandas as pd
 
 def load(out):
     rows = []
-    for p in sorted(glob.glob(os.path.join(out, "davis", "*",
-                                           "test_metrics.json"))):
+    # Recursive: a split named "benchmark/fold2" nests one level deeper,
+    # so a single-level glob silently omitted every benchmark fold.
+    root = os.path.join(out, "davis")
+    for p in sorted(glob.glob(os.path.join(root, "**", "test_metrics.json"),
+                              recursive=True)):
         try:
             with open(p) as f:
                 d = json.load(f)
         except (ValueError, OSError):
             print(f"  unreadable, skipped: {p}")
             continue
-        d["run"] = os.path.basename(os.path.dirname(p))
+        # Name the run by its path below davis/, so a nested fold reads as
+        # benchmark_fold2_seed2048 rather than colliding on fold2_seed2048.
+        rel = os.path.relpath(os.path.dirname(p), root)
+        d["run"] = rel.replace(os.sep, "_")
         rows.append(d)
     df = pd.DataFrame(rows)
     # A run interrupted and resumed, or written by an older version, can

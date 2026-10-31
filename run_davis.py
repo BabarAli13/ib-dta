@@ -80,8 +80,14 @@ def queue():
 
 
 def done_path(out, split, tag):
-    return os.path.join(out, "davis", f"{split.replace('/', '_')}_{tag}",
-                        "test_metrics.json")
+    # Must match train_ib.py exactly, which builds its output directory as
+    # OUTPUT_DIR/<data>/<split>_<tag> with the split left intact. A split
+    # like "benchmark/fold2" therefore lands in a nested directory,
+    # results/davis/benchmark/fold2_seed2048. Flattening the slash here
+    # looked for results/davis/benchmark_fold2_seed2048, which never
+    # exists, so finished benchmark folds were never detected and were
+    # re-run every session.
+    return os.path.join(out, "davis", f"{split}_{tag}", "test_metrics.json")
 
 
 def is_done(out, split, tag):
