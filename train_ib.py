@@ -103,6 +103,8 @@ def main():
                     help="cap training rows (quick runs)")
     ap.add_argument("--eval-subset", type=int, default=None,
                     help="cap val/test rows (quick runs)")
+    ap.add_argument("--no-resume", action="store_true",
+                    help="ignore last.pt and start the run from epoch 1")
     ap.add_argument("--no-audit", action="store_true",
                     help="skip the deletion audit after training")
     ap.add_argument("--set", nargs="*", default=None,
@@ -174,7 +176,34 @@ def main():
 
     best = {"score": -np.inf, "epoch": -1}
     history = []
-    for epoch in range(1, cfg["SOLVER"]["MAX_EPOCH"] + 1):
+    start_epoch = 1
+
+    # Mid-run resume. A full-scale run is hours long, so losing one to a
+    # power cut or a closed session is expensive. last.pt carries
+    # everything needed to continue: weights, optimiser and scheduler
+    # state, the best-so-far record and the history. It is removed once the
+    # run finishes, so a completed run never looks resumable.
+    last_path = os.path.join(out_dir, "last.pt")
+    cfg_sig = json.dumps(cfg, sort_keys=True)
+    if os.path.exists(last_path) and not args.no_resume:
+        try:
+            ck = torch.load(last_path, map_location=device, weights_only=False)
+            if ck.get("cfg_sig") != cfg_sig:
+                print("  last.pt is from a different configuration; "
+                      "starting fresh")
+            else:
+                model.load_state_dict(ck["model"])
+                opt.load_state_dict(ck["opt"])
+                sched.load_state_dict(ck["sched"])
+                best = ck["best"]
+                history = ck["history"]
+                start_epoch = ck["epoch"] + 1
+                print(f"  RESUMING from epoch {ck['epoch']} "
+                      f"(best so far epoch {best['epoch']})")
+        except Exception as e:
+            print(f"  last.pt unreadable ({type(e).__name__}); starting fresh")
+
+    for epoch in range(start_epoch, cfg["SOLVER"]["MAX_EPOCH"] + 1):
         model.train()
         t0, tot, nb = time.time(), 0.0, 0
         for nf, adj, nm, tok, pl, y in loaders["train"]:
@@ -210,6 +239,16 @@ def main():
             best = {"score": float(score), "epoch": epoch}
             if cfg["RESULT"]["SAVE_MODEL"]:
                 torch.save(model.state_dict(), os.path.join(out_dir, "best.pt"))
+
+        # Write the resume point after every epoch, via a temporary file so
+        # a crash during the write cannot leave a half-written checkpoint
+        # where a readable one used to be.
+        tmp = last_path + ".tmp"
+        torch.save({"epoch": epoch, "model": model.state_dict(),
+                    "opt": opt.state_dict(), "sched": sched.state_dict(),
+                    "best": best, "history": history, "cfg_sig": cfg_sig},
+                   tmp)
+        os.replace(tmp, last_path)
 
         # Early stopping. The reported result is always the best checkpoint,
         # so stopping early can only change the answer if the run would have
@@ -283,6 +322,13 @@ def main():
                    "budget_k": cfg["IB"]["BUDGET_K"],
                    "adaptive": cfg["IB"]["ADAPTIVE_BUDGET"],
                    "params": n_par}, f, indent=2)
+    # The run is complete, so the resume point is no longer meaningful and
+    # would otherwise make a finished run look interruptible.
+    if os.path.exists(last_path):
+        try:
+            os.remove(last_path)
+        except OSError:
+            pass
     print(f"written to {out_dir}")
 
 
