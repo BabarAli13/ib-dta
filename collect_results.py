@@ -18,11 +18,11 @@ import sys
 import pandas as pd
 
 
-def load(out):
+def load(out, data="davis"):
     rows = []
     # Recursive: a split named "benchmark/fold2" nests one level deeper,
     # so a single-level glob silently omitted every benchmark fold.
-    root = os.path.join(out, "davis")
+    root = os.path.join(out, data)
     for p in sorted(glob.glob(os.path.join(root, "**", "test_metrics.json"),
                               recursive=True)):
         try:
@@ -52,11 +52,13 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./result")
     ap.add_argument("--dest", default="results")
+    ap.add_argument("--data", default="davis",
+                    help="dataset subdirectory under --out (davis | kiba)")
     args = ap.parse_args()
 
-    df = load(args.out)
+    df = load(args.out, args.data)
     if df.empty:
-        raise SystemExit(f"no finished runs under {args.out}/davis/")
+        raise SystemExit(f"no finished runs under {args.out}/{args.data}/")
     os.makedirs(args.dest, exist_ok=True)
 
     keep = [c for c in ("run", "split", "selection", "budget_k", "adaptive",
@@ -65,7 +67,7 @@ def main():
                         "relative_residual", "best_epoch", "audit_error")
             if c in df.columns]
     df = df[keep].sort_values("run")
-    dest = os.path.join(args.dest, "davis_summary.csv")
+    dest = os.path.join(args.dest, f"{args.data}_summary.csv")
     df.to_csv(dest, index=False)
     print(f"  {len(df)} run(s) -> {dest}\n")
 
@@ -118,13 +120,16 @@ def main():
 
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from run_davis import queue
+        if args.data == "kiba":
+            from run_kiba import queue
+        else:
+            from run_davis import queue
         expected = len(queue())
     except Exception:
         expected = None
     if expected and len(df) < expected:
         print(f"\n  {expected - len(df)} of {expected} run(s) still missing. "
-              f"`python run_davis.py --list --out {args.out}` shows which.")
+              f"`python run_{args.data if args.data=='kiba' else 'davis'}.py --list --out {args.out}` shows which.")
 
 
 if __name__ == "__main__":
