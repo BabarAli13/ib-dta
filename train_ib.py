@@ -231,9 +231,12 @@ def main():
                "secs": time.time() - t0,
                **{f"val_{k}": v for k, v in val.items()}}
         history.append(row)
+        # flush: when stdout is redirected to a file Python block-buffers
+        # at about 8 KB, and an epoch line is ~160 bytes, so without this a
+        # long run looks stalled for its first fifty epochs.
         print("  " + "  ".join(
             f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
-            for k, v in row.items()))
+            for k, v in row.items()), flush=True)
 
         if score > best["score"]:
             best = {"score": float(score), "epoch": epoch}

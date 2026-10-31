@@ -176,7 +176,10 @@ def main():
               f"   ({(deadline - time.time()) / 3600:.1f} h left)\n{'=' * 68}",
               flush=True)
         t0 = time.time()
-        r = subprocess.run(cmd)
+        # Unbuffered child stdout, so progress reaches the log as it
+        # happens rather than in 8 KB blocks.
+        env = dict(os.environ, PYTHONUNBUFFERED="1")
+        r = subprocess.run(cmd, env=env)
         if r.returncode != 0:
             # One bad config should not cost the rest of the session.
             print(f"  FAILED (exit {r.returncode}); continuing", flush=True)
