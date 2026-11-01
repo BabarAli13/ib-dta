@@ -8,8 +8,9 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. Full-scale accuracy runs are in progress: **37 of 40**.
-Baselines and KIBA have not started. `run_davis.py --list` tracks progress.
+half an hour. **Davis is complete: 40 of 40 runs.** KIBA is running.
+Baselines have not started, and they are now the most important thing
+outstanding: see the benchmark result below.
 
 Anything below labelled demo-scale is not a result and should not be cited.
 
@@ -24,19 +25,60 @@ Davis, full scale, default configuration (adaptive entmax):
 | cold-drug | 0.7563 ± 0.1652 | 0.6435 ± 0.0417 | −0.16 | 5 |
 | scaffold | 1.1399 | 0.5973 | −0.75 | 1 |
 
+### Against published models, IB-DTA is behind
+
+Canonical DeepDTA fold protocol, five folds. These are the only numbers
+here directly comparable with published Davis tables.
+
+| Model | MSE | CI |
+|---|---|---|
+| NHGNN-DTA* | 0.196 | 0.914 |
+| MGraphDTA | 0.207 | 0.900 |
+| GraphDTA (GIN) | 0.229 | 0.893 |
+| DeepDTA | 0.261 | 0.878 |
+| **IB-DTA** | **0.362 ± 0.012** | **0.840 ± 0.005** |
+
+<sub>* different split protocol, included because omitting the strongest
+reported result would flatter ours.</sub>
+
+That is 39% worse MSE than the oldest baseline and 75% worse than
+MGraphDTA. We state it plainly because the alternative is for a reader to
+discover it.
+
+**The gap is not caused by the sparsity.** The dense control uses the same
+architecture with no bottleneck at all, every one of the 21,012 contacts
+retained, and scores 0.4759 on cold-target: *worse* than k=32 at 0.4663.
+Removing the bottleneck recovers nothing. Whatever costs the accuracy sits
+in the additive decoder or in the fact that no hyperparameter has been
+tuned, not in the selection.
+
+So the two claims separate:
+
+- **Sparsity is free.** Three seeds per budget, dense ranks 3rd of 7.
+- **Interpretability by construction costs accuracy**, here roughly +0.10
+  to +0.16 MSE against pooled models.
+
+What cannot yet be said is which of the two causes is responsible. The
+additive constraint and the absence of tuning are confounded, and
+separating them needs pooled baselines trained under identical conditions.
+Until that exists, the honest reading is that the gap is an upper bound on
+the price of exact attribution, not a measurement of it.
+
 ### Sparsity has no measurable accuracy cost
 
 Cold-target, top-k against the dense control, three seeds per budget:
 
-| k | support | MSE | vs dense | p (Welch) |
-|---|---|---|---|---|
-| 2 | 2 | 0.5081 ± 0.0236 | +0.024 | 0.58 |
-| 4 | 4 | 0.4924 ± 0.0277 | +0.008 | 0.85 |
-| 8 | 8 | 0.4905 ± 0.0633 | +0.006 | 0.91 |
-| 16 | 16 | 0.4891 ± 0.0299 | +0.005 | 0.91 |
-| **32** | 32 | **0.4663 ± 0.0187** | −0.018 | 0.66 |
-| 64 | 64 | 0.4725 ± 0.0329 | −0.012 | 0.78 |
-| dense | **21,012** | 0.4845 ± 0.0433 | — | — |
+| k | support | MSE | vs dense |
+|---|---|---|---|
+| 2 | 2 | 0.5081 ± 0.0236 | +0.032 |
+| 4 | 4 | 0.4924 ± 0.0277 | +0.017 |
+| 8 | 8 | 0.4905 ± 0.0633 | +0.015 |
+| 16 | 16 | 0.4891 ± 0.0299 | +0.013 |
+| **32** | 32 | **0.4663 ± 0.0187** | −0.010 |
+| 64 | 64 | 0.4725 ± 0.0329 | −0.003 |
+| dense | **21,012** | 0.4759 ± 0.0341 | — |
+
+All seven points now have three seeds.
 
 **No budget differs significantly from dense, k=2 included: two contacts
 against twenty-one thousand.** Dense ranks 3rd of 7, and two budgets beat
@@ -63,7 +105,7 @@ the description is withdrawn.
 
 ### Attribution
 
-Across all 34 runs visible to the collector: `exact_ok` true, worst
+Across all 40 Davis runs: `exact_ok` true, worst
 relative residual `1.8e-07`,
 AFS between `+0.683` and `+0.792`.
 
@@ -71,8 +113,8 @@ AFS between `+0.683` and `+0.792`.
 
 | selection | runs | polarity |
 |---|---|---|
-| entmax / top-k | 32 | exactly `1.0`, every run |
-| dense softmax | 2 | `0.999999996`, `0.999998548` |
+| entmax / top-k | 37 | exactly `1.0`, every run |
+| dense softmax | 3 | all below `1.0` |
 
 Polarity is `(AUC_most - AUC_least) / max(...)`, so it reaches exactly 1
 only when deleting the *least* important contacts moves the prediction by
@@ -486,10 +528,13 @@ whether or not IB-DTA wins on accuracy.
    training you also need `IB.CHECKPOINT_CHUNKS: true`, which is the
    default. See finding 5 — the analytic figure is the wrong number to
    size a GPU against. If you still OOM, lower `CHUNK_Q` or the batch size.
-2. **Baselines must be rerun**, not quoted — published numbers use different
-   splits and preprocessing. Note that no baseline implementation ships in
-   this repo yet, so the controlled-retraining comparison cannot currently
-   be produced from it.
+2. **Baselines are the main gap.** No baseline implementation ships here,
+   so the controlled-retraining comparison cannot be produced from this
+   repo. That now matters more than it did: IB-DTA is 39-75% behind
+   published models on the canonical protocol, and without pooled
+   baselines trained under identical conditions the cause cannot be
+   separated between the additive constraint and the absence of
+   hyperparameter tuning.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
 4. **Overfitting on Davis.** Training loss keeps falling long after
