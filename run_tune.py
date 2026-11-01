@@ -32,6 +32,7 @@ touched.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -69,6 +70,107 @@ TRIALS = [
     # Sparsity pressure shapes the support size and may be over-tight.
     ("sparse1e-4",  ["LOSS.LAMBDA_SPARSE", "0.0001"]),
 ]
+
+
+
+# ----------------------------------------------------------------------
+# Live progress
+# ----------------------------------------------------------------------
+EPOCH_RE = re.compile(
+    r"epoch=(\d+)\s+train_loss=([\d.]+).*?secs=([\d.]+).*?val_mse=([\d.]+)"
+    r".*?val_ci=([\d.]+)")
+
+
+def _enable_ansi():
+    """Windows consoles need VT processing turned on before carriage
+    returns redraw cleanly. Harmless everywhere else."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            k = ctypes.windll.kernel32
+            k.SetConsoleMode(k.GetStdHandle(-11), 7)
+        except Exception:
+            pass
+
+
+def _hms(sec):
+    sec = int(max(sec, 0))
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
+
+
+def _bar(frac, width=22):
+    frac = min(max(frac, 0.0), 1.0)
+    full = int(frac * width)
+    return "#" * full + "." * (width - full)
+
+
+def status_line(idx, total, tag, ep, max_epoch, vm, best, best_ep, vci,
+                elapsed, per_ep, patience):
+    """Progress against the expected stop, not the ceiling.
+
+    With patience p, a run ends at the earlier of max_epoch and
+    best_epoch + p. Drawing the bar against max_epoch would leave it
+    nearly empty for a run that early-stops at epoch 60 of 250, which is
+    the normal case and useless as feedback. The target moves outward
+    whenever the model improves, which is itself informative: a bar that
+    keeps receding means the run is still learning.
+    """
+    target = min(max_epoch, best_ep + patience) if patience else max_epoch
+    target = max(target, ep)
+    remaining = (target - ep) * per_ep
+    return (f"[{idx}/{total} {tag:<11}] ep {ep:>3}/~{target:<3} "
+            f"[{_bar(ep / max(target, 1))}] "
+            f"val {vm:.4f} best {best:.4f}@{best_ep:<3} "
+            f"CI {vci:.3f} {_hms(elapsed)}+~{_hms(remaining)}")
+
+
+def run_trial(cmd, tag, idx, total, max_epoch, log_path, live,
+              patience=0, env=None):
+    """Run one trial, rendering progress as it goes.
+
+    Child output is parsed rather than inherited so the screen can carry a
+    single updating line. Every raw line still reaches log_path, so making
+    the display readable costs nothing.
+    """
+    env = dict(os.environ, PYTHONUNBUFFERED="1", **(env or {}))
+    t0 = time.time()
+    best, best_ep, per_ep = float("inf"), 0, 0.0
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(f"\n===== trial {tag} =====\n")
+        log.flush()
+        proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True,
+                                bufsize=1)
+        for line in proc.stdout:
+            log.write(line)
+            log.flush()
+            m = EPOCH_RE.search(line)
+            if not m:
+                s = line.rstrip()
+                if s:
+                    if live:
+                        sys.stdout.write("\r" + " " * 118 + "\r")
+                    print("   " + s[:112], flush=True)
+                continue
+            ep, per_ep = int(m.group(1)), float(m.group(3))
+            vm, vci = float(m.group(4)), float(m.group(5))
+            if vm < best:
+                best, best_ep = vm, ep
+            msg = status_line(idx, total, tag, ep, max_epoch, vm, best,
+                              best_ep, vci, time.time() - t0, per_ep,
+                              patience)
+            if live:
+                sys.stdout.write("\r" + msg[:118].ljust(118))
+                sys.stdout.flush()
+            elif ep % 10 == 0 or ep == 1:
+                print(msg, flush=True)
+        proc.wait()
+    if live:
+        sys.stdout.write("\r" + " " * 118 + "\r")
+        sys.stdout.flush()
+    return proc.returncode, time.time() - t0
 
 
 def out_dir(out, tag):
@@ -167,10 +269,25 @@ def main():
         subprocess.run([sys.executable, "benchmark_split.py",
                         "--datasets", DATA], check=True)
 
-    deadline = time.time() + args.hours * 3600
+    _enable_ansi()
+    live = sys.stdout.isatty()
+    os.makedirs(args.out, exist_ok=True)
+    _base = dict(zip(BASE[::2], BASE[1::2]))
+    max_epoch = int(_base["SOLVER.MAX_EPOCH"])
+    patience = int(_base.get("SOLVER.PATIENCE", 0))
+    started = time.time()
+    deadline = started + args.hours * 3600
     est = args.est * 3600
     durations, ran = [], 0
-    for tag, over in trials:
+    pending = [x for x in trials if not is_done(args.out, x[0])]
+    print(f"\n  {len(trials) - len(pending)}/{len(trials)} trials already "
+          f"done, {len(pending)} to run, budget {args.hours:.0f} h")
+    print(f"  raw output -> {os.path.join(args.out, 'trials.log')}")
+    if not live:
+        print("  (output is redirected: printing a status line every "
+              "10 epochs instead of a live bar)")
+    print()
+    for idx, (tag, over) in enumerate(trials, 1):
         if is_done(args.out, tag):
             continue
         left = deadline - time.time()
@@ -181,21 +298,24 @@ def main():
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG, "--data", DATA,
                "--split", SPLIT, "--tag", tag, "--no-audit",
                "--set", "RESULT.OUTPUT_DIR", args.out, *BASE, *over]
-        print(f"\n{'=' * 68}\n  trial {tag}   {' '.join(over) or '(baseline)'}"
-              f"   ({left / 3600:.1f} h left)\n{'=' * 68}", flush=True)
-        t0 = time.time()
-        env = dict(os.environ, PYTHONUNBUFFERED="1")
-        r = subprocess.run(cmd, env=env)
-        if r.returncode != 0:
-            print(f"  FAILED (exit {r.returncode}); continuing", flush=True)
+        print(f"  trial {idx}/{len(trials)}  {tag}   "
+              f"{' '.join(over) or '(baseline)'}   "
+              f"[{_hms(time.time() - started)} elapsed, "
+              f"{left / 3600:.1f} h budget left]", flush=True)
+        rc, dt = run_trial(cmd, tag, idx, len(trials), max_epoch,
+                           os.path.join(args.out, "trials.log"), live,
+                           patience)
+        if rc != 0:
+            print(f"  FAILED (exit {rc}); continuing", flush=True)
             continue
         ran += 1
-        durations.append(time.time() - t0)
+        durations.append(dt)
         est = max(durations)
         v = val_of(args.out, tag)
         if v:
-            print(f"  {tag}: val MSE {v['val_mse']:.4f} at epoch "
-                  f"{v['best_epoch']} of {v['epochs_run']}", flush=True)
+            print(f"  done {tag:<12} val MSE {v['val_mse']:.4f}  "
+                  f"CI {v['val_ci']:.4f}  best epoch {v['best_epoch']}"
+                  f"/{v['epochs_run']}  in {_hms(dt)}\n", flush=True)
     report(args.out)
 
 
