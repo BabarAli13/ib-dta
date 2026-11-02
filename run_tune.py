@@ -80,6 +80,17 @@ TRIALS = [
     ("h192rank0.8", ["IB.H_DIM", "192", "LOSS.LAMBDA_RANK", "0.8"]),
     ("h256rank0.8", ["IB.H_DIM", "256", "LOSS.LAMBDA_RANK", "0.8"]),
     ("h384rank0.8", ["IB.H_DIM", "384", "LOSS.LAMBDA_RANK", "0.8"]),
+    # Four levers beat the baseline on their own: capacity, the protein
+    # crop, the learning rate and the sparsity weight. The crop is the
+    # cheapest of them, since shorter sequences also shorten every epoch,
+    # so it goes into every combination from here.
+    ("h256p800",    ["IB.H_DIM", "256", "PROTEIN.MAX_LEN", "800"]),
+    ("h256p800lr",  ["IB.H_DIM", "256", "PROTEIN.MAX_LEN", "800",
+                     "SOLVER.LR", "0.001"]),
+    ("h384p800lr",  ["IB.H_DIM", "384", "PROTEIN.MAX_LEN", "800",
+                     "SOLVER.LR", "0.001"]),
+    ("h256p800all", ["IB.H_DIM", "256", "PROTEIN.MAX_LEN", "800",
+                     "SOLVER.LR", "0.001", "LOSS.LAMBDA_SPARSE", "0.0001"]),
 ]
 
 # Seeds used when a configuration is re-run for confirmation. One seed per
@@ -298,6 +309,14 @@ def report(out):
     if best[2]["best_epoch"] > best[2]["epochs_run"] - 10:
         print("  WARNING: the winner peaked near the end of its run and may "
               "still be improving. Raise MAX_EPOCH again before trusting it.")
+    if len(done) >= 8:
+        print(f"\n  CAUTION: {len(done)} configurations have now been "
+              f"compared on the same validation split of {SPLIT}. Selecting "
+              f"repeatedly against one split overfits it, and the winner's "
+              f"validation score is optimistically biased as an estimate of "
+              f"what it will do elsewhere. Confirm the top candidates with "
+              f"--confirm, and treat the five-fold test result as the only "
+              f"honest number.")
     print("\n  Test set untouched. Apply the winner to all five folds with "
           "run_davis.py before reading any test number.")
 
