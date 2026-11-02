@@ -57,9 +57,13 @@ TRIALS = [
     # biological-hint pathways.
     ("rank0.3",     ["LOSS.LAMBDA_RANK", "0.3"]),
     ("rank0.8",     ["LOSS.LAMBDA_RANK", "0.8"]),
-    # 0.42 M parameters against roughly 1.5 M for DrugBAN.
+    # 0.42 M parameters against roughly 1.5 M for DrugBAN. The sweep
+    # found this monotone through 256, so it continues past it rather
+    # than assuming saturation.
     ("hdim192",     ["IB.H_DIM", "192"]),
     ("hdim256",     ["IB.H_DIM", "256"]),
+    ("hdim384",     ["IB.H_DIM", "384"]),
+    ("hdim512",     ["IB.H_DIM", "512"]),
     # If the ceiling was wrong then the cosine schedule was decaying over
     # the wrong horizon too.
     ("lr1e-3",      ["SOLVER.LR", "0.001"]),
@@ -75,6 +79,7 @@ TRIALS = [
     # to interfere.
     ("h192rank0.8", ["IB.H_DIM", "192", "LOSS.LAMBDA_RANK", "0.8"]),
     ("h256rank0.8", ["IB.H_DIM", "256", "LOSS.LAMBDA_RANK", "0.8"]),
+    ("h384rank0.8", ["IB.H_DIM", "384", "LOSS.LAMBDA_RANK", "0.8"]),
 ]
 
 # Seeds used when a configuration is re-run for confirmation. One seed per
@@ -205,10 +210,16 @@ def val_of(out, tag):
         df = pd.read_csv(h)
         if df.empty or "val_mse" not in df:
             return None
+        i = df.val_mse.idxmin()
         return {"val_mse": float(df.val_mse.min()),
-                "val_ci": float(df.loc[df.val_mse.idxmin(), "val_ci"]),
-                "best_epoch": int(df.loc[df.val_mse.idxmin(), "epoch"]),
-                "epochs_run": int(df.epoch.max())}
+                "val_ci": float(df.loc[i, "val_ci"]),
+                "best_epoch": int(df.loc[i, "epoch"]),
+                "epochs_run": int(df.epoch.max()),
+                # Support at the selected epoch. A configuration that wins
+                # by collapsing to a degenerate support should be visible
+                # as such in the table rather than discovered later.
+                "support": (float(df.loc[i, "val_support"])
+                            if "val_support" in df else float("nan"))}
     except Exception:
         return None
 
@@ -242,13 +253,14 @@ def report(out):
             rows.append((tag, ["(confirmation run)"], v))
     done = [r for r in rows if r[2]]
     print(f"\n  {'trial':<12} {'val MSE':>9} {'val CI':>8} "
-          f"{'best ep':>8} {'ran':>5}   overrides")
+          f"{'support':>8} {'best ep':>8} {'ran':>5}   overrides")
     for tag, over, v in rows:
         if v is None:
-            print(f"  {tag:<12} {'--':>9} {'--':>8} {'--':>8} {'--':>5}   "
-                  f"{' '.join(over) or '(baseline)'}")
+            print(f"  {tag:<12} {'--':>9} {'--':>8} {'--':>8} {'--':>8} "
+                  f"{'--':>5}   {' '.join(over) or '(baseline)'}")
         else:
             print(f"  {tag:<12} {v['val_mse']:>9.4f} {v['val_ci']:>8.4f} "
+                  f"{v['support']:>8.1f} "
                   f"{v['best_epoch']:>8d} {v['epochs_run']:>5d}   "
                   f"{' '.join(over) or '(baseline)'}")
     if not done:
@@ -276,6 +288,13 @@ def report(out):
                 if len(vals) > 1 else float("nan")
             print(f"    {g:<14} {m:.4f} +/- {sd:.4f}  (n={len(vals)})")
         print("    Choose on these, not on the single-seed table above.")
+    if best[2].get("support", float("nan")) < 4:
+        print(f"  NOTE: the winner selects only "
+              f"{best[2]['support']:.1f} contacts. That is the regime the "
+              f"collapse analysis warns about. Re-run it without "
+              f"--skip-test and without --no-audit to confirm the "
+              f"attribution still passes its deletion audit before "
+              f"adopting it.")
     if best[2]["best_epoch"] > best[2]["epochs_run"] - 10:
         print("  WARNING: the winner peaked near the end of its run and may "
               "still be improving. Raise MAX_EPOCH again before trusting it.")
