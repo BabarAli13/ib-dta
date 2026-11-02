@@ -351,6 +351,7 @@ def main():
             break
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG, "--data", DATA,
                "--split", SPLIT, "--tag", tag, "--no-audit",
+               "--skip-test",
                "--set", "RESULT.OUTPUT_DIR", args.out, *BASE, *over]
         print(f"  trial {idx}/{len(trials)}  {tag}   "
               f"{' '.join(over) or '(baseline)'}   "

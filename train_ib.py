@@ -103,6 +103,11 @@ def main():
                     help="cap training rows (quick runs)")
     ap.add_argument("--eval-subset", type=int, default=None,
                     help="cap val/test rows (quick runs)")
+    ap.add_argument("--skip-test", action="store_true",
+                    help="do not evaluate the test set at all. Use during "
+                         "hyperparameter search: a test score printed in a "
+                         "tuning log influences the choice whether or not "
+                         "the selection code reads it.")
     ap.add_argument("--no-resume", action="store_true",
                     help="ignore last.pt and start the run from epoch 1")
     ap.add_argument("--no-audit", action="store_true",
@@ -268,9 +273,18 @@ def main():
     ckpt = os.path.join(out_dir, "best.pt")
     if os.path.exists(ckpt):
         model.load_state_dict(torch.load(ckpt, map_location=device))
-    test = evaluate(model, loaders["test"], task, device)
-    print("\nTEST (best epoch %d): " % best["epoch"] +
-          "  ".join(f"{k}={v:.4f}" for k, v in test.items()))
+    if args.skip_test:
+        # Selecting a configuration by a test score and then reporting
+        # that score is the usual way a benchmark number stops meaning
+        # anything. During a search the test set is not evaluated, so it
+        # cannot leak through a log file or through the person reading it.
+        test = {}
+        print("\nTEST SKIPPED (--skip-test). Best val at epoch %d."
+              % best["epoch"])
+    else:
+        test = evaluate(model, loaders["test"], task, device)
+        print("\nTEST (best epoch %d): " % best["epoch"] +
+              "  ".join(f"{k}={v:.4f}" for k, v in test.items()))
 
     # Faithfulness audit on the best checkpoint. Done here, while the model
     # and loaders are live, because the frontier figure needs AFS against
