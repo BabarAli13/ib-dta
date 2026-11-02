@@ -69,7 +69,21 @@ TRIALS = [
     ("plen800",     ["PROTEIN.MAX_LEN", "800"]),
     # Sparsity pressure shapes the support size and may be over-tight.
     ("sparse1e-4",  ["LOSS.LAMBDA_SPARSE", "0.0001"]),
+    # Combinations of the two levers that won their own sweep. One factor
+    # at a time finds the binding constraints; it does not tell you
+    # whether they compose, and capacity and loss weighting have no reason
+    # to interfere.
+    ("h192rank0.8", ["IB.H_DIM", "192", "LOSS.LAMBDA_RANK", "0.8"]),
+    ("h256rank0.8", ["IB.H_DIM", "256", "LOSS.LAMBDA_RANK", "0.8"]),
 ]
+
+# Seeds used when a configuration is re-run for confirmation. One seed per
+# trial is enough to rank candidates coarsely and not enough to trust the
+# ranking: the measured seed-to-seed standard deviation on Davis is about
+# 0.043 MSE, which is wider than the spread across most of the sweep.
+# --confirm re-runs the named configurations at these seeds so a winner is
+# chosen on a mean rather than on one draw.
+CONFIRM_SEEDS = [2048, 7, 13]
 
 
 
@@ -212,6 +226,20 @@ def report(out):
     for tag, over in TRIALS:
         v = val_of(out, tag)
         rows.append((tag, over, v))
+    # Confirmation runs are tagged <config>_s<seed> and are not in TRIALS,
+    # so scan the output directory for them too; otherwise the grouped
+    # means below would never appear.
+    import glob as _glob
+    prefix = os.path.join(out, DATA, f"{SPLIT}_")
+    extra = sorted(d[len(prefix):] for d in _glob.glob(prefix + "*")
+                   if os.path.isdir(d))
+    known = {tag for tag, _ in TRIALS}
+    for tag in extra:
+        if tag in known:
+            continue
+        v = val_of(out, tag)
+        if v:
+            rows.append((tag, ["(confirmation run)"], v))
     done = [r for r in rows if r[2]]
     print(f"\n  {'trial':<12} {'val MSE':>9} {'val CI':>8} "
           f"{'best ep':>8} {'ran':>5}   overrides")
@@ -233,6 +261,21 @@ def report(out):
         d = base[2]["val_mse"] - best[2]["val_mse"]
         print(f"  improvement over baseline: {d:+.4f} MSE "
               f"({d / base[2]['val_mse'] * 100:+.1f}%)")
+    # Where a configuration was confirmed at several seeds, the mean is
+    # what should decide, not the luckiest draw.
+    import collections
+    groups = collections.defaultdict(list)
+    for tag, _, v in done:
+        if v and "_s" in tag:
+            groups[tag.rsplit("_s", 1)[0]].append(v["val_mse"])
+    if groups:
+        print("\n  confirmed configurations (mean over seeds)")
+        for g, vals in sorted(groups.items(), key=lambda kv: sum(kv[1]) / len(kv[1])):
+            m = sum(vals) / len(vals)
+            sd = (sum((x - m) ** 2 for x in vals) / (len(vals) - 1)) ** 0.5 \
+                if len(vals) > 1 else float("nan")
+            print(f"    {g:<14} {m:.4f} +/- {sd:.4f}  (n={len(vals)})")
+        print("    Choose on these, not on the single-seed table above.")
     if best[2]["best_epoch"] > best[2]["epochs_run"] - 10:
         print("  WARNING: the winner peaked near the end of its run and may "
               "still be improving. Raise MAX_EPOCH again before trusting it.")
@@ -249,9 +292,20 @@ def main():
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--confirm", nargs="*", default=None,
+                    help="re-run these configurations at CONFIRM_SEEDS, so "
+                         "a winner is chosen on a mean rather than one draw")
     args = ap.parse_args()
 
     trials = [t for t in TRIALS if not args.only or t[0] in args.only]
+    if args.confirm:
+        named = {k: v for k, v in TRIALS}
+        missing = [c for c in args.confirm if c not in named]
+        if missing:
+            raise SystemExit(f"unknown configuration(s): {missing}")
+        trials = [(f"{c}_s{s}", named[c] + ["SOLVER.SEED", str(s)])
+                  for c in args.confirm for s in CONFIRM_SEEDS
+                  if not (c == args.confirm[0] and False)]
 
     if args.report:
         report(args.out)
