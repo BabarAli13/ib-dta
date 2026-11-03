@@ -33,8 +33,12 @@ def main():
                     help="a run directory containing best.pt and "
                          "config_used.json")
     ap.add_argument("--split", default="test", choices=["test", "val"])
-    ap.add_argument("--batches", type=int, default=3,
-                    help="batches to audit; more is slower but less noisy")
+    ap.add_argument("--batches", type=int, default=12,
+                    help="batches to audit. Support varies enough between "
+                         "complexes that a few batches misestimate it: 3 "
+                         "batches gave 18.4 contacts where the full test "
+                         "set gave 27.3. AFS and exactness are stable much "
+                         "sooner than support is.")
     args = ap.parse_args()
 
     cfg_path = os.path.join(args.run, "config_used.json")
@@ -110,8 +114,11 @@ def main():
                          .float().mean()))
         ok_all = ok_all and bool(ok)
 
-    print(f"\n  audited {len(afs)} batch(es) of {args.split}")
-    print(f"  mean support      {np.mean(sup):8.1f} contacts")
+    n_seen = len(afs) * cfg["SOLVER"]["BATCH_SIZE"]
+    print(f"\n  audited {len(afs)} batch(es) of {args.split} "
+          f"(~{n_seen} complexes)")
+    print(f"  mean support      {np.mean(sup):8.1f} contacts "
+          f"(sd {np.std(sup):.1f} across batches)")
     print(f"  AFS               {np.mean(afs):+8.4f}  "
           f"(min {min(afs):+.4f}, max {max(afs):+.4f})")
     print(f"  polarity          {np.mean(pol):8.4f}")
