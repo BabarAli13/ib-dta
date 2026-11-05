@@ -116,6 +116,11 @@ def main():
                     help="cfg overrides: --set IB.BUDGET_K 16 IB.SELECTION topk")
     args = ap.parse_args()
 
+    # Windows sleeps under an unattended run unless some process says not
+    # to. Harmless on Linux; see keepawake.py for why this is not optional.
+    from keepawake import keep_awake
+    keep_awake()
+
     overrides = {}
     if args.set:
         if len(args.set) % 2:

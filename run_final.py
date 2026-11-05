@@ -28,6 +28,7 @@ import subprocess
 import sys
 import time
 
+from keepawake import keep_awake
 from run_tune import BASE, _enable_ansi, _hms, run_trial
 
 CFG = "configs/IBDTA.yaml"
@@ -112,6 +113,9 @@ def main():
         return
 
     _enable_ansi()
+    # Before anything long starts. The queue process outlives every child,
+    # so one request here covers all five folds.
+    keep_awake()
     live = not args.no_live and sys.stdout.isatty()
     pend = [f for f in FOLDS if not is_done(args.out, f)]
     print(f"  final benchmark, H_DIM=256, seed {SEED}")
