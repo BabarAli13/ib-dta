@@ -194,24 +194,46 @@ def main():
     # state, the best-so-far record and the history. It is removed once the
     # run finishes, so a completed run never looks resumable.
     last_path = os.path.join(out_dir, "last.pt")
+    prev_path = os.path.join(out_dir, "last.prev.pt")
     cfg_sig = json.dumps(cfg, sort_keys=True)
-    if os.path.exists(last_path) and not args.no_resume:
-        try:
-            ck = torch.load(last_path, map_location=device, weights_only=False)
+    # Two generations, not one. A temporary file plus os.replace protects
+    # against a crash during the write, but not against an abrupt power
+    # loss: the rename can reach the directory while the file's own data
+    # is still in the disk cache, which leaves a last.pt that exists and
+    # does not load. That happened on the lab machine, which logged six
+    # unexpected shutdowns in two days, and it cost a whole fold because
+    # the only resume point was the one that had just been destroyed.
+    # Keeping the previous epoch's checkpoint turns the worst case from
+    # five hours into seven minutes.
+    if not args.no_resume:
+        for path in (last_path, prev_path):
+            if not os.path.exists(path):
+                continue
+            try:
+                ck = torch.load(path, map_location=device,
+                                weights_only=False)
+            except Exception as e:
+                print(f"  {os.path.basename(path)} unreadable "
+                      f"({type(e).__name__})")
+                continue
             if ck.get("cfg_sig") != cfg_sig:
-                print("  last.pt is from a different configuration; "
-                      "starting fresh")
-            else:
-                model.load_state_dict(ck["model"])
-                opt.load_state_dict(ck["opt"])
-                sched.load_state_dict(ck["sched"])
-                best = ck["best"]
-                history = ck["history"]
-                start_epoch = ck["epoch"] + 1
-                print(f"  RESUMING from epoch {ck['epoch']} "
-                      f"(best so far epoch {best['epoch']})")
-        except Exception as e:
-            print(f"  last.pt unreadable ({type(e).__name__}); starting fresh")
+                print(f"  {os.path.basename(path)} is from a different "
+                      f"configuration; ignoring")
+                continue
+            model.load_state_dict(ck["model"])
+            opt.load_state_dict(ck["opt"])
+            sched.load_state_dict(ck["sched"])
+            best = ck["best"]
+            history = ck["history"]
+            start_epoch = ck["epoch"] + 1
+            print(f"  RESUMING from epoch {ck['epoch']} "
+                  f"(best so far epoch {best['epoch']})"
+                  + ("  [fallback checkpoint]"
+                     if path == prev_path else ""))
+            break
+        else:
+            if os.path.exists(last_path) or os.path.exists(prev_path):
+                print("  no usable resume point; starting fresh")
 
     for epoch in range(start_epoch, cfg["SOLVER"]["MAX_EPOCH"] + 1):
         model.train()
@@ -257,10 +279,22 @@ def main():
         # a crash during the write cannot leave a half-written checkpoint
         # where a readable one used to be.
         tmp = last_path + ".tmp"
-        torch.save({"epoch": epoch, "model": model.state_dict(),
-                    "opt": opt.state_dict(), "sched": sched.state_dict(),
-                    "best": best, "history": history, "cfg_sig": cfg_sig},
-                   tmp)
+        with open(tmp, "wb") as fh:
+            torch.save({"epoch": epoch, "model": model.state_dict(),
+                        "opt": opt.state_dict(), "sched": sched.state_dict(),
+                        "best": best, "history": history,
+                        "cfg_sig": cfg_sig}, fh)
+            # Force the bytes to the platter before the rename makes this
+            # the official resume point. Without it the rename can land
+            # first and a power loss leaves a file that exists and will
+            # not load.
+            fh.flush()
+            os.fsync(fh.fileno())
+        if os.path.exists(last_path):
+            try:
+                os.replace(last_path, prev_path)
+            except OSError:
+                pass
         os.replace(tmp, last_path)
 
         # Early stopping. The reported result is always the best checkpoint,
@@ -346,11 +380,12 @@ def main():
                    "params": n_par}, f, indent=2)
     # The run is complete, so the resume point is no longer meaningful and
     # would otherwise make a finished run look interruptible.
-    if os.path.exists(last_path):
-        try:
-            os.remove(last_path)
-        except OSError:
-            pass
+    for path in (last_path, prev_path):
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     print(f"written to {out_dir}")
 
 
