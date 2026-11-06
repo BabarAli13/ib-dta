@@ -246,6 +246,9 @@ def is_done(out, tag):
 
 
 def report(out, suffix=""):
+    # Column width from the rows actually being printed, not a constant:
+    # --patience appends a suffix and the longest tag grew past 12.
+    w = max(12, max(len(t + suffix) for t, _ in TRIALS))
     rows = []
     for tag, over in TRIALS:
         tag = tag + suffix
@@ -266,14 +269,14 @@ def report(out, suffix=""):
         if v:
             rows.append((tag, ["(confirmation run)"], v))
     done = [r for r in rows if r[2]]
-    print(f"\n  {'trial':<12} {'val MSE':>9} {'val CI':>8} "
+    print(f"\n  {'trial':<{w}} {'val MSE':>9} {'val CI':>8} "
           f"{'support':>8} {'best ep':>8} {'ran':>5}   overrides")
     for tag, over, v in rows:
         if v is None:
-            print(f"  {tag:<12} {'--':>9} {'--':>8} {'--':>8} {'--':>8} "
+            print(f"  {tag:<{w}} {'--':>9} {'--':>8} {'--':>8} {'--':>8} "
                   f"{'--':>5}   {' '.join(over) or '(baseline)'}")
         else:
-            print(f"  {tag:<12} {v['val_mse']:>9.4f} {v['val_ci']:>8.4f} "
+            print(f"  {tag:<{w}} {v['val_mse']:>9.4f} {v['val_ci']:>8.4f} "
                   f"{v['support']:>8.1f} "
                   f"{v['best_epoch']:>8d} {v['epochs_run']:>5d}   "
                   f"{' '.join(over) or '(baseline)'}")
