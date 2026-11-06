@@ -8,11 +8,14 @@ explanation is the mechanism rather than a description of it.
 ## Status
 
 Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. **Davis is complete: 40 of 40 runs.** KIBA is running.
-Baselines have not started, and they are now the most important thing
-outstanding: see the benchmark result below.
+half an hour. **Davis is complete:** 40 runs at the shipped configuration,
+a hyperparameter sweep selected on validation only, and the five canonical
+folds measured again at the one setting the sweep found. KIBA is stopped
+part-way. Baselines have not started, and they are now the most important
+thing outstanding: see the benchmark result below.
 
-Anything below labelled demo-scale is not a result and should not be cited.
+Every number in this file is measured at full scale. Nothing here is a
+demonstration run.
 
 ### Split regimes
 
@@ -36,12 +39,13 @@ here directly comparable with published Davis tables.
 | MGraphDTA | 0.207 | 0.900 |
 | GraphDTA (GIN) | 0.229 | 0.893 |
 | DeepDTA | 0.261 | 0.878 |
-| **IB-DTA** | **0.362 ± 0.012** | **0.840 ± 0.005** |
+| **IB-DTA** (tuned) | **0.331 ± 0.035** | **0.850 ± 0.013** |
+| IB-DTA (shipped config) | 0.362 ± 0.012 | 0.840 ± 0.005 |
 
 <sub>* different split protocol, included because omitting the strongest
 reported result would flatter ours.</sub>
 
-That is 39% worse MSE than the oldest baseline and 75% worse than
+That is 27% worse MSE than the oldest baseline and 60% worse than
 MGraphDTA. We state it plainly because the alternative is for a reader to
 discover it.
 
@@ -49,20 +53,66 @@ discover it.
 architecture with no bottleneck at all, every one of the 21,012 contacts
 retained, and scores 0.4759 on cold-target: *worse* than k=32 at 0.4663.
 Removing the bottleneck recovers nothing. Whatever costs the accuracy sits
-in the additive decoder or in the fact that no hyperparameter has been
-tuned, not in the selection.
+in the additive decoder or in the encoders, not in the selection.
 
 So the two claims separate:
 
 - **Sparsity is free.** Three seeds per budget, dense ranks 3rd of 7.
-- **Interpretability by construction costs accuracy**, here roughly +0.10
-  to +0.16 MSE against pooled models.
+- **Interpretability by construction costs accuracy**, here +0.124 MSE
+  against the strongest comparable pooled model.
 
 What cannot yet be said is which of the two causes is responsible. The
-additive constraint and the absence of tuning are confounded, and
+additive constraint and the encoder generation are confounded, and
 separating them needs pooled baselines trained under identical conditions.
 Until that exists, the honest reading is that the gap is an upper bound on
 the price of exact attribution, not a measurement of it.
+
+### Tuning accounts for a fifth of the gap, and the sweep is incomplete
+
+Single-factor variants on fold 0, selected on validation MSE only, epoch
+ceiling 250, patience 25. The test set was never read during the sweep.
+
+| configuration | val MSE | val CI | support | best epoch |
+|---|---|---|---|---|
+| shipped (h=128) | 0.3334 | 0.841 | 107.0 | 74 |
+| λ_rank = 0.3 | 0.3459 | 0.832 | 32.8 | 80 |
+| λ_rank = 0.8 | 0.3287 | 0.860 | 48.3 | 43 |
+| h = 192 | 0.3118 | 0.856 | 43.4 | 80 |
+| **h = 256** | **0.2899** | 0.854 | 27.1 | 116 |
+
+Capacity is the only factor that moved the result beyond the seed-to-seed
+sd of 0.043. Carried to all five folds it is worth 0.031 MSE, 0.362 to
+0.331, at 556,163 parameters against roughly 1.5 M for DrugBAN. The wider
+model is also **sparser**: 27 contacts against 107.
+
+Two things this does not say. The improvement was still monotone at 256
+and the 384 and 512 configurations did not run, so 256 is the best setting
+*tested* and not an optimum. The learning rate, protein crop and sparsity
+weight were never evaluated. The sweep was cut short by repeated
+unexpected shutdowns on the machine running it, and the remaining trials
+are queued rather than abandoned. Until they finish, the 0.124 bound is
+loose by an unknown amount.
+
+Patience 25 is itself suspect: the winning trial recorded its best at
+epoch 116 and ran to 141, so it was stopped by the rule rather than by
+convergence. `--patience` reruns the ladder at a looser value, tagging
+results separately so the two protocols cannot be mixed.
+
+### The tuned model keeps its attribution
+
+Rerunning the deletion audit on all five tuned folds:
+
+| | value |
+|---|---|
+| support | 40.6 ± 22.6 contacts of 21,012 |
+| AFS | +0.746 ± 0.023 |
+| exactness residual | 1.2e-07 worst, 2.1e-08 best |
+
+The accuracy was not bought back from the property the architecture exists
+for. Fold 1 is the outlier throughout: it stopped earliest at epoch 48,
+settled on 80.1 contacts against 23.8 to 37.8 elsewhere, and returned the
+worst MSE of the five at 0.389. The other four lie between 0.303 and
+0.339, giving 0.316 ± 0.016 without it. We report the five-fold mean.
 
 ### Sparsity has no measurable accuracy cost
 
@@ -271,6 +321,10 @@ install in seconds.
 | `drugban_upstream/` | DrugBAN's original files, vendored unchanged, for the baseline audit. Needs `dgl` + `dgllife`; nothing else here does |
 | `preflight.py` | Three-minute check that a session is set up correctly, before committing hours to it |
 | `run_davis.py` | The full Davis queue, resumable across session-limited free GPUs |
+| `run_tune.py` | Single-factor hyperparameter sweep, selected on validation only, `--patience` tags its own results |
+| `run_final.py` | The five canonical folds at the tuned setting, with the audit on |
+| `audit_run.py` | Deletion audit on an existing checkpoint, in seconds rather than retraining for hours |
+| `keepawake.py` | Stops Windows sleeping underneath an unattended run |
 | `collect_results.py` | Turns finished runs into summary tables and LaTeX fragments |
 | `notebooks/` | Colab notebook |
 | `figures/` | Generated figures (see below) |
@@ -422,6 +476,24 @@ python collect_results.py --out ./results
 python run_davis.py --list --out ./results     # what is left
 ```
 
+Then the tuning pass and the final folds:
+
+```bash
+python run_tune.py                             # sweep, validation only
+python run_tune.py --report                    # the table above
+python run_final.py                            # five folds at the winner
+python run_final.py --list                     # the paper row, formatted
+```
+
+`run_tune.py` never evaluates the test set (`--skip-test`), so a tuning
+log cannot influence the choice even by being read. `run_final.py` turns
+the test evaluation and the deletion audit back on.
+
+On Windows, run long jobs through Task Scheduler as SYSTEM rather than
+from a console. A console job dies with its login session, and the
+machine will sleep underneath it unless something holds a power request;
+`keepawake.py` asserts one, which `powercfg /requests` can confirm.
+
 Split by group across two GPUs with `--only seeds` and
 `--only frontier benchmark scaffold`. In a notebook the whole launch must
 be one line: each `!` runs its own shell, so a `wait` on its own line has
@@ -433,61 +505,12 @@ on a T4 at full scale.
 
 ---
 
-## Sample results (demo scale — read the caveat)
-
-These are **not** the results above. They come from `run_experiments.py`
-with **200 training rows and 4 epochs on CPU**.
-Concordance index sits at 0.47–0.55 across every variant, i.e. **near
-chance**: at this scale nothing is really learning, so none of these
-accuracy numbers mean anything. They are here to show the pipeline runs
-end to end and produces every artefact.
-
-| variant | MSE | CI | AFS | support |
-|---|---|---|---|---|
-| entmax + adaptive | 1.258 | 0.547 | +0.746 | 45.6 |
-| entmax, fixed | 1.168 | 0.503 | +0.736 | 51.7 |
-| top-k (k=16) | 1.063 | 0.478 | +0.757 | 16.0 |
-| dense softmax | 1.061 | 0.472 | +0.739 | **12,480.7** |
-
-The one shape worth noting — and worth *testing properly* at full scale —
-is the last column against the first: a **780× smaller support** (16 pairs
-vs 12,480) costs essentially nothing in MSE here. That is the frontier
-question the research plan is built around. At this subset size it is a
-hint, not evidence.
-
-The budget sweep at this scale appeared to locate a knee. **Full-scale
-measurement contradicts it** — see "The frontier is flat" above, where the
-k=8 point moved by 0.094 MSE between two seeds. The table is kept only to
-show the sweep runs end to end:
-
-| budget k | MSE | AFS | support | deletion residual |
-|---|---|---|---|---|
-| 2 | 1.341 | +0.784 | 2.0 | `0.0e+00` |
-| 4 | 1.096 | +0.762 | 4.0 | `0.0e+00` |
-| **8** | **1.053** | +0.731 | 8.0 | `7.2e-07` |
-| 16 | 1.063 | +0.757 | 16.0 | `8.3e-07` |
-| *dense softmax* | *1.061* | *+0.739* | *12,480.7* | *violates the bound* |
-
-At full scale there is no knee: every budget from k=2 upward is
-indistinguishable from dense. Exactness holds at every budget here and in
-all 23 full-scale runs.
-
-The "violates the bound" note on the dense row above refers to a pooled
-decoder. Do not read it as a property of dense *selection*: the full-scale
-dense control is softmax selection with the additive decoder and it
-satisfies exactness (residual `5.5e-08`). Exactness is a property of the
-decoder, not of the selection.
-
-Caveat worth repeating: at CI ≈ 0.5 none of these models are learning, so
-treat this as a demonstration that the sweep runs and produces the right
-kind of curve. The sweep was cut at k=16 because the remaining budgets
-exceeded the CPU budget here; `run_experiments.py` sweeps
-`[2, 4, 8, 16, 32, 64]` by default on a GPU.
-
 ## Figures
 
-Generated by `run_experiments.py`. All demo-scale unless noted — they show
-the machinery works, not publishable numbers.
+Generated by `run_experiments.py` from whatever runs are present in
+`results/`. The paper's figures are built separately by
+`make_measured.py`, which reads only the full-scale summary and refuses to
+invent anything.
 
 | Figure | Shows |
 |---|---|
@@ -530,23 +553,31 @@ whether or not IB-DTA wins on accuracy.
    size a GPU against. If you still OOM, lower `CHUNK_Q` or the batch size.
 2. **Baselines are the main gap.** No baseline implementation ships here,
    so the controlled-retraining comparison cannot be produced from this
-   repo. That now matters more than it did: IB-DTA is 39-75% behind
-   published models on the canonical protocol, and without pooled
-   baselines trained under identical conditions the cause cannot be
-   separated between the additive constraint and the absence of
-   hyperparameter tuning.
+   repo. That now matters more than it did: IB-DTA is 27-60% behind
+   published models on the canonical protocol, tuning has been shown to
+   account for about a fifth of that, and without pooled baselines trained
+   under identical conditions the rest cannot be separated between the
+   additive constraint and the encoder generation.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
-4. **Overfitting on Davis.** Training loss keeps falling long after
-   validation turns. On cold-target the best epoch was 17 of 50 and
-   validation MSE rose monotonically from about epoch 23. `SOLVER.PATIENCE`
-   defaults to 12; the reported result is the best checkpoint either way,
-   so early stopping saves roughly an hour per run without changing the
-   answer.
-5. **One seed is not a result.** Several of the numbers quoted above come
-   from a single run. The `run_davis.py` queue exists to replace them with
-   seed-averaged values, and `collect_results.py` marks any cell backed by
-   fewer than five seeds.
+4. **Early stopping is a protocol choice, not a convenience.** On
+   cold-target at the shipped width the best epoch was 17 of 50 and
+   validation MSE rose monotonically from about epoch 23, so a tight
+   patience costs nothing there. At width 256 the opposite holds: the best
+   epoch was 116 and the run was stopped at 141 by patience rather than by
+   convergence. A result measured at one patience is not comparable with
+   one measured at another, so `run_tune.py` and `run_final.py` both put
+   the value in the run's tag and write to separate directories.
+5. **Seed counts vary and are stated.** The split regimes carry three to
+   five seeds, the budget sweep three per point, and the scaffold row one.
+   `collect_results.py` marks any cell backed by fewer than five.
+6. **The sweep ran one seed per configuration.** That is enough to rank
+   candidates coarsely and not enough to trust the ranking: the measured
+   seed-to-seed sd of 0.043 is wider than most of the spread across the
+   sweep. The capacity result survives because it was confirmed on all
+   five folds afterwards, which is a paired comparison on the same data
+   rather than one draw. `--confirm` reruns a named configuration across
+   seeds for anything where that confirmation is not available.
 
 ---
 
