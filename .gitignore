@@ -5,3 +5,10 @@ result/
 result_cls/
 *.pt
 .ipynb_checkpoints/
+
+# Machine-local launchers. run_tune.cmd and run_final.cmd in the repo use
+# whatever `python` is on PATH, which a scheduled task running as SYSTEM
+# does not have. Each machine therefore pins its own interpreter into a
+# *_local.cmd and points its task at that, instead of editing the tracked
+# file and dirtying the working tree before every pull.
+*_local.cmd
