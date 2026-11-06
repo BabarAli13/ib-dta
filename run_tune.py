@@ -245,9 +245,10 @@ def is_done(out, tag):
             and not os.path.exists(os.path.join(d, "last.pt")))
 
 
-def report(out):
+def report(out, suffix=""):
     rows = []
     for tag, over in TRIALS:
+        tag = tag + suffix
         v = val_of(out, tag)
         rows.append((tag, over, v))
     # Confirmation runs are tagged <config>_s<seed> and are not in TRIALS,
@@ -335,6 +336,12 @@ def main():
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--patience", type=int, default=None,
+                    help="override early-stopping patience. Runs are tagged "
+                         "with the value, so results at one patience never "
+                         "overwrite or silently mix with another: patience "
+                         "is part of the protocol, and a trial stopped by a "
+                         "different rule is not a comparable measurement.")
     ap.add_argument("--no-live", action="store_true",
                     help="print one line every ten epochs instead of a "
                          "redrawing bar, for logs and schedulers")
@@ -343,18 +350,28 @@ def main():
                          "a winner is chosen on a mean rather than one draw")
     args = ap.parse_args()
 
-    trials = [t for t in TRIALS if not args.only or t[0] in args.only]
+    base = list(BASE)
+    if args.patience is not None:
+        base[base.index("SOLVER.PATIENCE") + 1] = str(args.patience)
+
+    def tag_of(t):
+        """Patience lives in the tag, not only in the config, so a glance
+        at the results directory says which protocol produced what."""
+        return t if args.patience is None else f"{t}_p{args.patience}"
+
+    trials = [(tag_of(t), o) for t, o in TRIALS
+              if not args.only or t in args.only]
     if args.confirm:
         named = {k: v for k, v in TRIALS}
         missing = [c for c in args.confirm if c not in named]
         if missing:
             raise SystemExit(f"unknown configuration(s): {missing}")
-        trials = [(f"{c}_s{s}", named[c] + ["SOLVER.SEED", str(s)])
-                  for c in args.confirm for s in CONFIRM_SEEDS
-                  if not (c == args.confirm[0] and False)]
+        trials = [(tag_of(f"{c}_s{s}"), named[c] + ["SOLVER.SEED", str(s)])
+                  for c in args.confirm for s in CONFIRM_SEEDS]
 
     if args.report:
-        report(args.out)
+        report(args.out,
+               "" if args.patience is None else f"_p{args.patience}")
         return
     if args.list:
         for tag, over in trials:
@@ -375,7 +392,7 @@ def main():
     keep_awake()
     live = not args.no_live and sys.stdout.isatty()
     os.makedirs(args.out, exist_ok=True)
-    _base = dict(zip(BASE[::2], BASE[1::2]))
+    _base = dict(zip(base[::2], base[1::2]))
     max_epoch = int(_base["SOLVER.MAX_EPOCH"])
     patience = int(_base.get("SOLVER.PATIENCE", 0))
     started = time.time()
@@ -402,7 +419,7 @@ def main():
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG, "--data", DATA,
                "--split", SPLIT, "--tag", tag, "--no-audit",
                "--skip-test",
-               "--set", "RESULT.OUTPUT_DIR", args.out, *BASE, *over]
+               "--set", "RESULT.OUTPUT_DIR", args.out, *base, *over]
         print(f"  trial {idx}/{len(trials)}  {tag}   "
               f"{' '.join(over) or '(baseline)'}   "
               f"[{_hms(time.time() - started)} elapsed"
@@ -422,7 +439,8 @@ def main():
             print(f"  done {tag:<12} val MSE {v['val_mse']:.4f}  "
                   f"CI {v['val_ci']:.4f}  best epoch {v['best_epoch']}"
                   f"/{v['epochs_run']}  in {_hms(dt)}\n", flush=True)
-    report(args.out)
+    report(args.out,
+           "" if args.patience is None else f"_p{args.patience}")
 
 
 if __name__ == "__main__":

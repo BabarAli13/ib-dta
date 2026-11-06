@@ -47,16 +47,35 @@ MAX_EPOCH = int(BASE[BASE.index("SOLVER.MAX_EPOCH") + 1])
 PATIENCE = int(BASE[BASE.index("SOLVER.PATIENCE") + 1])
 
 
+def settings(patience=None, hdim=None):
+    """Config overrides and the tag that records them.
+
+    Patience and width both go into the tag. A fold measured under one
+    stopping rule is not comparable with a fold measured under another,
+    and a results directory that cannot say which rule produced it
+    invites exactly that comparison.
+    """
+    over, tag = list(FINAL), TAG
+    if hdim is not None:
+        over[over.index("IB.H_DIM") + 1] = str(hdim)
+        tag = f"h{hdim}"
+    pat = PATIENCE
+    if patience is not None:
+        over[over.index("SOLVER.PATIENCE") + 1] = str(patience)
+        tag, pat = f"{tag}_p{patience}", patience
+    return over, tag, pat
+
+
 def split_of(f):
     return f"benchmark/fold{f}"
 
 
-def out_dir(out, f):
-    return os.path.join(out, DATA, f"{split_of(f)}_{TAG}")
+def out_dir(out, f, tag=TAG):
+    return os.path.join(out, DATA, f"{split_of(f)}_{tag}")
 
 
-def is_done(out, f):
-    p = os.path.join(out_dir(out, f), "test_metrics.json")
+def is_done(out, f, tag=TAG):
+    p = os.path.join(out_dir(out, f, tag), "test_metrics.json")
     if not os.path.exists(p):
         return False
     try:
@@ -67,13 +86,13 @@ def is_done(out, f):
         return False       # truncated by a killed session; redo it
 
 
-def report(out):
+def report(out, tag=TAG):
     import statistics
     vals = []
     print(f"\n  fold   test MSE    CI      support   AFS      epochs")
     print(f"  {'-' * 56}")
     for f in FOLDS:
-        p = os.path.join(out_dir(out, f), "test_metrics.json")
+        p = os.path.join(out_dir(out, f, tag), "test_metrics.json")
         if not os.path.exists(p):
             print(f"  {f}      pending")
             continue
@@ -103,13 +122,21 @@ def main():
                          "measured in this session")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--log", default="final_log.txt")
+    ap.add_argument("--patience", type=int, default=None,
+                    help="override early-stopping patience; runs are tagged "
+                         "with it so one protocol never overwrites another")
+    ap.add_argument("--hdim", type=int, default=None,
+                    help="override the hidden width, if the sweep finds a "
+                         "better one than 256")
     ap.add_argument("--no-live", action="store_true",
                     help="print one line every ten epochs instead of a "
                          "redrawing bar, for logs and schedulers")
     args = ap.parse_args()
 
+    over, tag, patience = settings(args.patience, args.hdim)
+
     if args.list:
-        report(args.out)
+        report(args.out, tag)
         return
 
     _enable_ansi()
@@ -117,12 +144,12 @@ def main():
     # so one request here covers all five folds.
     keep_awake()
     live = not args.no_live and sys.stdout.isatty()
-    pend = [f for f in FOLDS if not is_done(args.out, f)]
-    print(f"  final benchmark, H_DIM=256, seed {SEED}")
+    pend = [f for f in FOLDS if not is_done(args.out, f, tag)]
+    print(f"  final benchmark, tag {tag}, patience {patience}, seed {SEED}")
     print(f"  {len(FOLDS) - len(pend)}/{len(FOLDS)} folds done, "
           f"{len(pend)} to run (~{len(pend) * args.est:.0f} h)")
     if not pend:
-        report(args.out)
+        report(args.out, tag)
         return
 
     deadline = time.time() + args.hours * 3600 if args.hours else None
@@ -138,13 +165,13 @@ def main():
                       f"that would be killed mid-run.")
                 break
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG,
-               "--data", DATA, "--split", split_of(f), "--tag", TAG,
-               "--set", "RESULT.OUTPUT_DIR", args.out, *FINAL]
+               "--data", DATA, "--split", split_of(f), "--tag", tag,
+               "--set", "RESULT.OUTPUT_DIR", args.out, *over]
         print(f"\n{'=' * 68}\n  fold {f}   ({i} of {len(pend)})"
               f"   elapsed {_hms(time.time() - t_start)}\n{'=' * 68}",
               flush=True)
         rc, dt = run_trial(cmd, f"fold{f}", i, len(pend), MAX_EPOCH,
-                           args.log, live, patience=PATIENCE)
+                           args.log, live, patience=patience)
         if rc != 0:
             print(f"  fold {f} FAILED (exit {rc}); continuing", flush=True)
             continue
@@ -152,7 +179,7 @@ def main():
         est = max(durations)
         print(f"  fold {f} finished in {_hms(dt)}", flush=True)
 
-    report(args.out)
+    report(args.out, tag)
 
 
 if __name__ == "__main__":
