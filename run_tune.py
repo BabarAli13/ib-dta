@@ -37,6 +37,8 @@ import subprocess
 import sys
 import time
 
+from keepawake import keep_awake
+
 CFG = "configs/IBDTA.yaml"
 DATA = "davis"
 SPLIT = "benchmark/fold0"
@@ -323,13 +325,19 @@ def report(out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--hours", type=float, default=24.0)
+    ap.add_argument("--hours", type=float, default=0.0,
+                    help="session budget in hours; 0 means no limit, which "
+                         "is right on a machine you own and wrong on a "
+                         "hosted session with a hard cap")
     ap.add_argument("--est", type=float, default=3.0,
                     help="hours to assume a trial takes until measured")
     ap.add_argument("--out", default="./tune")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--no-live", action="store_true",
+                    help="print one line every ten epochs instead of a "
+                         "redrawing bar, for logs and schedulers")
     ap.add_argument("--confirm", nargs="*", default=None,
                     help="re-run these configurations at CONFIRM_SEEDS, so "
                          "a winner is chosen on a mean rather than one draw")
@@ -362,18 +370,22 @@ def main():
                         "--datasets", DATA], check=True)
 
     _enable_ansi()
-    live = sys.stdout.isatty()
+    # Windows sleeps under an unattended run unless some process says not
+    # to; see keepawake.py. The sweep is the job this cost the most.
+    keep_awake()
+    live = not args.no_live and sys.stdout.isatty()
     os.makedirs(args.out, exist_ok=True)
     _base = dict(zip(BASE[::2], BASE[1::2]))
     max_epoch = int(_base["SOLVER.MAX_EPOCH"])
     patience = int(_base.get("SOLVER.PATIENCE", 0))
     started = time.time()
-    deadline = started + args.hours * 3600
+    deadline = (started + args.hours * 3600) if args.hours else None
     est = args.est * 3600
     durations, ran = [], 0
     pending = [x for x in trials if not is_done(args.out, x[0])]
     print(f"\n  {len(trials) - len(pending)}/{len(trials)} trials already "
-          f"done, {len(pending)} to run, budget {args.hours:.0f} h")
+          f"done, {len(pending)} to run, budget "
+          + (f"{args.hours:.0f} h" if deadline else "unlimited"))
     print(f"  raw output -> {os.path.join(args.out, 'trials.log')}")
     if not live:
         print("  (output is redirected: printing a status line every "
@@ -382,7 +394,7 @@ def main():
     for idx, (tag, over) in enumerate(trials, 1):
         if is_done(args.out, tag):
             continue
-        left = deadline - time.time()
+        left = (deadline - time.time()) if deadline else float("inf")
         if left < est:
             print(f"\n  {left / 60:.0f} min left, a trial needs about "
                   f"{est / 60:.0f} min. Stopping here.")
@@ -393,8 +405,9 @@ def main():
                "--set", "RESULT.OUTPUT_DIR", args.out, *BASE, *over]
         print(f"  trial {idx}/{len(trials)}  {tag}   "
               f"{' '.join(over) or '(baseline)'}   "
-              f"[{_hms(time.time() - started)} elapsed, "
-              f"{left / 3600:.1f} h budget left]", flush=True)
+              f"[{_hms(time.time() - started)} elapsed"
+              + (f", {left / 3600:.1f} h budget left]" if deadline
+                 else "]"), flush=True)
         rc, dt = run_trial(cmd, tag, idx, len(trials), max_epoch,
                            os.path.join(args.out, "trials.log"), live,
                            patience)
