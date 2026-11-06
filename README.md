@@ -12,10 +12,103 @@ half an hour. **Davis is complete:** 40 runs at the shipped configuration,
 a hyperparameter sweep selected on validation only, and the five canonical
 folds measured again at the one setting the sweep found. KIBA is stopped
 part-way. Baselines have not started, and they are now the most important
-thing outstanding: see the benchmark result below.
+thing outstanding, because they are what would turn the accuracy gap from
+a bound into a measurement.
 
 Every number in this file is measured at full scale. Nothing here is a
 demonstration run.
+
+### What this establishes
+
+Three claims, in the order the evidence supports them.
+
+1. **A pooled attention map cannot be read as an explanation.** Not
+   "is often misleading": cannot. We construct, by direct optimisation, an
+   attention map at total-variation distance 0.857 from a trained model's
+   own map that reproduces its predictions to 1.3e-04. The displayed
+   heatmap is one of many consistent with the same output.
+2. **Replacing the contraction with an additive decode makes attribution
+   exact.** Deleting any subset of contacts moves the prediction by the
+   sum of their contributions, verified to 1.5e-08. Attributed importance
+   and causal effect become the same number by construction rather than
+   by correlation.
+3. **The sparsity is free.** No budget from k=2 to k=64 is
+   distinguishable from a dense model retaining all 21,012 contacts, which
+   bounds the cost of a ten-thousandfold reduction in the interaction map
+   below about 0.05 MSE.
+
+What it costs is accuracy against tuned pooled models, measured and
+reported below rather than in a footnote. The two are separable questions
+and this file keeps them separate.
+
+### Sparsity has no measurable accuracy cost
+
+Cold-target, top-k against the dense control, three seeds per budget:
+
+| k | support | MSE | vs dense |
+|---|---|---|---|
+| 2 | 2 | 0.5081 ± 0.0236 | +0.032 |
+| 4 | 4 | 0.4924 ± 0.0277 | +0.017 |
+| 8 | 8 | 0.4905 ± 0.0633 | +0.015 |
+| 16 | 16 | 0.4891 ± 0.0299 | +0.013 |
+| **32** | 32 | **0.4663 ± 0.0187** | −0.010 |
+| 64 | 64 | 0.4725 ± 0.0329 | −0.003 |
+| dense | **21,012** | 0.4759 ± 0.0341 | — |
+
+All seven points now have three seeds.
+
+**No budget differs significantly from dense, k=2 included: two contacts
+against twenty-one thousand.** Dense ranks 3rd of 7, and two budgets beat
+it numerically.
+
+Read this as a bound rather than as a flat curve. The ordering of the
+means does run monotonically with k, and a Spearman test on those six
+means returns ρ = −0.943, p = 0.005. That test is the wrong one: it treats
+each mean as a single observation and discards the sd ≈ 0.036 each one
+carries. Regressing the 18 individual runs on log₂k gives a slope of
+−0.0074 per doubling with p = 0.110 and a confidence interval spanning
+zero. The total effect across a 32-fold range of k is 0.037 MSE against a
+within-budget sd of 0.036, so three seeds cannot resolve it either way.
+
+The claim the data supports: **any accuracy cost of reducing the support
+from 21,012 contacts to 2 is below about 0.05 MSE.** Resolving whether the
+true effect is zero or merely small would need roughly 15 seeds per
+budget, about 90 runs, for a result that would still read "small".
+
+Earlier revisions of this file described a knee at k=8. That came from
+single-seed data: k=8 measured 0.5621 at one seed and 0.4416 at another, a
+swing larger than the entire range across budgets. The knee was noise and
+the description is withdrawn.
+
+### Attribution
+
+Across all 40 Davis runs: `exact_ok` true, worst
+relative residual `1.8e-07`,
+AFS between `+0.683` and `+0.792`.
+
+**Polarity separates sparse from dense with no overlap.**
+
+| selection | runs | polarity |
+|---|---|---|
+| entmax / top-k | 37 | exactly `1.0`, every run |
+| dense softmax | 3 | all below `1.0` |
+
+Polarity is `(AUC_most - AUC_least) / max(...)`, so it reaches exactly 1
+only when deleting the *least* important contacts moves the prediction by
+precisely zero. That requires those contacts to contribute exactly zero,
+which is what α-entmax and top-k give and softmax structurally cannot.
+The deletion audit detects the exact-zero property directly, rather than
+inferring it from small weights.
+
+Five top-k runs report a relative residual of exactly `0.0`. Those are the
+k=2 and k=4 runs, where deleting the top five contacts deletes the whole
+support.
+
+Note that the dense control is softmax selection with the **additive**
+decoder, so it satisfies exactness too. Exactness is a property of the
+decoder, not of the selection. Demonstrating that a pooled decoder
+violates it needs a genuinely pooled comparator, which means the
+baselines, which have not been run.
 
 ### Split regimes
 
@@ -28,10 +121,12 @@ Davis, full scale, default configuration (adaptive entmax):
 | cold-drug | 0.7563 ± 0.1652 | 0.6435 ± 0.0417 | −0.16 | 5 |
 | scaffold | 1.1399 | 0.5973 | −0.75 | 1 |
 
-### Against published models, IB-DTA is behind
+### What it costs on accuracy
 
 Canonical DeepDTA fold protocol, five folds. These are the only numbers
-here directly comparable with published Davis tables.
+here directly comparable with published Davis tables, which is why they
+are reported against the published models rather than against our own
+retraining.
 
 | Model | MSE | CI |
 |---|---|---|
@@ -113,75 +208,6 @@ for. Fold 1 is the outlier throughout: it stopped earliest at epoch 48,
 settled on 80.1 contacts against 23.8 to 37.8 elsewhere, and returned the
 worst MSE of the five at 0.389. The other four lie between 0.303 and
 0.339, giving 0.316 ± 0.016 without it. We report the five-fold mean.
-
-### Sparsity has no measurable accuracy cost
-
-Cold-target, top-k against the dense control, three seeds per budget:
-
-| k | support | MSE | vs dense |
-|---|---|---|---|
-| 2 | 2 | 0.5081 ± 0.0236 | +0.032 |
-| 4 | 4 | 0.4924 ± 0.0277 | +0.017 |
-| 8 | 8 | 0.4905 ± 0.0633 | +0.015 |
-| 16 | 16 | 0.4891 ± 0.0299 | +0.013 |
-| **32** | 32 | **0.4663 ± 0.0187** | −0.010 |
-| 64 | 64 | 0.4725 ± 0.0329 | −0.003 |
-| dense | **21,012** | 0.4759 ± 0.0341 | — |
-
-All seven points now have three seeds.
-
-**No budget differs significantly from dense, k=2 included: two contacts
-against twenty-one thousand.** Dense ranks 3rd of 7, and two budgets beat
-it numerically.
-
-Read this as a bound rather than as a flat curve. The ordering of the
-means does run monotonically with k, and a Spearman test on those six
-means returns ρ = −0.943, p = 0.005. That test is the wrong one: it treats
-each mean as a single observation and discards the sd ≈ 0.036 each one
-carries. Regressing the 18 individual runs on log₂k gives a slope of
-−0.0074 per doubling with p = 0.110 and a confidence interval spanning
-zero. The total effect across a 32-fold range of k is 0.037 MSE against a
-within-budget sd of 0.036, so three seeds cannot resolve it either way.
-
-The claim the data supports: **any accuracy cost of reducing the support
-from 21,012 contacts to 2 is below about 0.05 MSE.** Resolving whether the
-true effect is zero or merely small would need roughly 15 seeds per
-budget, about 90 runs, for a result that would still read "small".
-
-Earlier revisions of this file described a knee at k=8. That came from
-single-seed data: k=8 measured 0.5621 at one seed and 0.4416 at another, a
-swing larger than the entire range across budgets. The knee was noise and
-the description is withdrawn.
-
-### Attribution
-
-Across all 40 Davis runs: `exact_ok` true, worst
-relative residual `1.8e-07`,
-AFS between `+0.683` and `+0.792`.
-
-**Polarity separates sparse from dense with no overlap.**
-
-| selection | runs | polarity |
-|---|---|---|
-| entmax / top-k | 37 | exactly `1.0`, every run |
-| dense softmax | 3 | all below `1.0` |
-
-Polarity is `(AUC_most - AUC_least) / max(...)`, so it reaches exactly 1
-only when deleting the *least* important contacts moves the prediction by
-precisely zero. That requires those contacts to contribute exactly zero,
-which is what α-entmax and top-k give and softmax structurally cannot.
-The deletion audit detects the exact-zero property directly, rather than
-inferring it from small weights.
-
-Five top-k runs report a relative residual of exactly `0.0`. Those are the
-k=2 and k=4 runs, where deleting the top five contacts deletes the whole
-support.
-
-Note that the dense control is softmax selection with the **additive**
-decoder, so it satisfies exactness too. Exactness is a property of the
-decoder, not of the selection. Demonstrating that a pooled decoder
-violates it needs a genuinely pooled comparator, which means the
-baselines, which have not been run.
 
 ### Cold-drug is a negative result, not a bug
 
