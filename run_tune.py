@@ -59,15 +59,20 @@ TRIALS = [
     # biological-hint pathways.
     ("rank0.3",     ["LOSS.LAMBDA_RANK", "0.3"]),
     ("rank0.8",     ["LOSS.LAMBDA_RANK", "0.8"]),
-    # 0.42 M parameters against roughly 1.5 M for DrugBAN. The sweep
-    # found this monotone through 256, so it continues past it rather
-    # than assuming saturation.
+    # 0.42 M parameters against roughly 1.5 M for DrugBAN. Measured at
+    # patience 50 the curve is flat past 192: 0.2894 at 256, 0.2943 at
+    # 384, 0.2896 at 512, a spread of 0.005 against a seed sd of 0.043.
+    # Capacity is exhausted, and 256 is a real choice rather than the
+    # largest anyone reached.
     ("hdim192",     ["IB.H_DIM", "192"]),
     ("hdim256",     ["IB.H_DIM", "256"]),
     ("hdim384",     ["IB.H_DIM", "384"]),
     ("hdim512",     ["IB.H_DIM", "512"]),
     # If the ceiling was wrong then the cosine schedule was decaying over
-    # the wrong horizon too.
+    # the wrong horizon too. This turned out to be the best single factor
+    # measured: 0.2798 at the shipped 128 width, beating every capacity
+    # setting while using a third of the parameters. The shipped
+    # configuration was mistuned, not capacity-starved.
     ("lr1e-3",      ["SOLVER.LR", "0.001"]),
     ("lr2e-4",      ["SOLVER.LR", "0.0002"]),
     # Davis kinases average about 790 residues; padding to 1200 spends
@@ -82,10 +87,14 @@ TRIALS = [
     ("h192rank0.8", ["IB.H_DIM", "192", "LOSS.LAMBDA_RANK", "0.8"]),
     ("h256rank0.8", ["IB.H_DIM", "256", "LOSS.LAMBDA_RANK", "0.8"]),
     ("h384rank0.8", ["IB.H_DIM", "384", "LOSS.LAMBDA_RANK", "0.8"]),
-    # Four levers beat the baseline on their own: capacity, the protein
-    # crop, the learning rate and the sparsity weight. The crop is the
-    # cheapest of them, since shorter sequences also shorten every epoch,
-    # so it goes into every combination from here.
+    # Capacity and step size were the two factors that beat the baseline
+    # on their own, and they are the obvious composition to test: a wider
+    # model with a step size tuned for the narrow one is not the same
+    # experiment as either. This one is deliberately kept clean of the
+    # protein crop so that a win can be attributed.
+    ("h256lr1e-3",  ["IB.H_DIM", "256", "SOLVER.LR", "0.001"]),
+    # The crop is the cheapest remaining lever, since shorter sequences
+    # also shorten every epoch, so it goes into the combinations below.
     ("h256p800",    ["IB.H_DIM", "256", "PROTEIN.MAX_LEN", "800"]),
     ("h256p800lr",  ["IB.H_DIM", "256", "PROTEIN.MAX_LEN", "800",
                      "SOLVER.LR", "0.001"]),
@@ -261,7 +270,10 @@ def report(out, suffix=""):
     prefix = os.path.join(out, DATA, f"{SPLIT}_")
     extra = sorted(d[len(prefix):] for d in _glob.glob(prefix + "*")
                    if os.path.isdir(d))
-    known = {tag for tag, _ in TRIALS}
+    # With --patience the printed tags carry a suffix, so comparing bare
+    # TRIALS names against directory names re-listed every ordinary trial
+    # a second time as a confirmation run.
+    known = {tag + suffix for tag, _ in TRIALS}
     for tag in extra:
         if tag in known:
             continue
