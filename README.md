@@ -9,9 +9,11 @@ explanation is the mechanism rather than a description of it.
 
 Theory and dataset audits are measured and reproducible on CPU in about
 half an hour. **Davis is complete:** 40 runs at the shipped configuration,
-a hyperparameter sweep selected on validation only, and the five canonical
-folds measured again at the one setting the sweep found. KIBA is stopped
-part-way. Baselines have not started, and they are now the most important
+a ten-configuration sweep selected on validation only, and the five
+canonical folds measured again at the capacity setting it found. Seed
+replication of the top candidates is running; until it finishes, the
+choice between the best few configurations is not settled. KIBA is stopped
+part-way. Baselines have not started, and they are the most important
 thing outstanding, because they are what would turn the accuracy gap from
 a bound into a measurement.
 
@@ -150,7 +152,8 @@ retained, and scores 0.4759 on cold-target: *worse* than k=32 at 0.4663.
 Removing the bottleneck recovers nothing. Whatever costs the accuracy sits
 in the additive decoder or in the encoders, not in the selection.
 
-So the two claims separate:
+Tuning recovers about 0.031 MSE of that on the five folds, and the sweep
+below shows where it stops paying. So the two claims separate:
 
 - **Sparsity is free.** Three seeds per budget, dense ranks 3rd of 7.
 - **Interpretability by construction costs accuracy**, here +0.124 MSE
@@ -162,36 +165,60 @@ separating them needs pooled baselines trained under identical conditions.
 Until that exists, the honest reading is that the gap is an upper bound on
 the price of exact attribution, not a measurement of it.
 
-### Tuning accounts for a fifth of the gap, and the sweep is incomplete
+### What tuning recovers, and where it stops
 
 Single-factor variants on fold 0, selected on validation MSE only, epoch
-ceiling 250, patience 25. The test set was never read during the sweep.
+ceiling 250, patience 50. The test set was never read during the sweep.
 
 | configuration | val MSE | val CI | support | best epoch |
 |---|---|---|---|---|
-| shipped (h=128) | 0.3334 | 0.841 | 107.0 | 74 |
-| λ_rank = 0.3 | 0.3459 | 0.832 | 32.8 | 80 |
+| shipped (h=128, lr 5e-4) | 0.3334 | 0.841 | 107.0 | 74 |
+| **lr = 1e-3** | **0.2798** | 0.859 | 32.7 | 155 |
+| h = 256 | 0.2894 | 0.856 | 22.0 | 69 |
+| h = 512 | 0.2896 | 0.859 | 23.3 | 116 |
+| h = 384 | 0.2943 | 0.856 | 24.1 | 102 |
+| protein crop = 800 | 0.2964 | 0.854 | 39.8 | 152 |
+| λ_sparse = 1e-4 | 0.3214 | 0.853 | 53.8 | 74 |
 | λ_rank = 0.8 | 0.3287 | 0.860 | 48.3 | 43 |
-| h = 192 | 0.3118 | 0.856 | 43.4 | 80 |
-| **h = 256** | **0.2899** | 0.854 | 27.1 | 116 |
+| λ_rank = 0.3 | 0.3459 | 0.832 | 32.8 | 80 |
+| lr = 2e-4 | 0.4019 | 0.817 | 19.9 | 63 |
 
-Capacity is the only factor that moved the result beyond the seed-to-seed
-sd of 0.043. Carried to all five folds it is worth 0.031 MSE, 0.362 to
-0.331, at 556,163 parameters against roughly 1.5 M for DrugBAN. The wider
-model is also **sparser**: 27 contacts against 107.
+<sub>λ_rank rows measured at patience 25; every other row at 50.</sub>
 
-Two things this does not say. The improvement was still monotone at 256
-and the 384 and 512 configurations did not run, so 256 is the best setting
-*tested* and not an optimum. The learning rate, protein crop and sparsity
-weight were never evaluated. The sweep was cut short by repeated
-unexpected shutdowns on the machine running it, and the remaining trials
-are queued rather than abandoned. Until they finish, the 0.124 bound is
-loose by an unknown amount.
+**Capacity saturates.** 256, 384 and 512 agree to within 0.005 against a
+seed-to-seed sd of 0.043. There is nothing further up that axis, so 256 is
+a choice rather than the largest width anyone reached.
 
-Patience 25 is itself suspect: the winning trial recorded its best at
-epoch 116 and ran to 141, so it was stopped by the rule rather than by
-convergence. `--patience` reruns the ladder at a looser value, tagging
-results separately so the two protocols cannot be mixed.
+**Capacity was not the lever.** The step size alone reaches 0.2798 at the
+*original* 128 width with 424,579 parameters, beating every capacity
+setting while using a third of the weights of the 256-wide model. The
+shipped configuration was mistuned, not capacity-starved. `lr = 2e-4` is
+the control that makes this credible: moving the step size the other way
+costs 0.069, so the axis is real rather than an artefact of one split.
+
+**Five unrelated changes all land between 0.280 and 0.296.** That looks
+like a ceiling for this architecture on this fold rather than a lever
+anyone has found, and it is the reason the accuracy gap is reported as a
+bound: tuning recovers about 0.04 validation MSE, after which these knobs
+stop paying.
+
+**Accuracy and sparsity move together here.** Every configuration that
+improves on the shipped one also shrinks the support, from 107 contacts to
+between 22 and 40. The better model is the sparser one, across seven
+independent changes.
+
+Two caveats that matter for how these numbers should be read. Twelve
+configurations have now been scored against one validation split, so the
+winner's 0.2798 is optimistically biased; the top four span 0.015 against
+a seed sd of 0.043 and are not separable. Seed replication
+(`--confirm`) and the five-fold test result are the only honest basis for
+choosing between them, and the five-fold result quoted above was measured
+at `h = 256`, before the step size was known to matter.
+
+Patience is part of the protocol rather than a convenience: the best
+epochs here run from 43 to 155, so a tight patience truncates some
+configurations and not others. `--patience` tags its results separately so
+the two cannot be averaged together by accident.
 
 ### The tuned model keeps its attribution
 
@@ -580,20 +607,21 @@ whether or not IB-DTA wins on accuracy.
 2. **Baselines are the main gap.** No baseline implementation ships here,
    so the controlled-retraining comparison cannot be produced from this
    repo. That now matters more than it did: IB-DTA is 27-60% behind
-   published models on the canonical protocol, tuning has been shown to
-   account for about a fifth of that, and without pooled baselines trained
-   under identical conditions the rest cannot be separated between the
-   additive constraint and the encoder generation.
+   published models on the canonical protocol, a ten-configuration sweep
+   has shown where tuning stops paying, and without pooled baselines
+   trained under identical conditions the remainder cannot be separated
+   between the additive constraint and the encoder generation.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
 4. **Early stopping is a protocol choice, not a convenience.** On
    cold-target at the shipped width the best epoch was 17 of 50 and
    validation MSE rose monotonically from about epoch 23, so a tight
-   patience costs nothing there. At width 256 the opposite holds: the best
-   epoch was 116 and the run was stopped at 141 by patience rather than by
-   convergence. A result measured at one patience is not comparable with
-   one measured at another, so `run_tune.py` and `run_final.py` both put
-   the value in the run's tag and write to separate directories.
+   patience costs nothing there. Across the sweep the best epoch ranges
+   from 43 to 155, so one patience setting truncates some configurations
+   and not others, which is a confound rather than a saving. A result
+   measured at one patience is not comparable with one measured at
+   another, so `run_tune.py` and `run_final.py` both put the value in the
+   run's tag and write to separate directories.
 5. **Seed counts vary and are stated.** The split regimes carry three to
    five seeds, the budget sweep three per point, and the scaffold row one.
    `collect_results.py` marks any cell backed by fewer than five.
