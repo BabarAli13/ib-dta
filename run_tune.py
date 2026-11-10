@@ -111,6 +111,7 @@ TRIALS = [
 # --confirm re-runs the named configurations at these seeds so a winner is
 # chosen on a mean rather than on one draw.
 CONFIRM_SEEDS = [2048, 7, 13]
+PATIENCE_DEFAULT = int(BASE[BASE.index("SOLVER.PATIENCE") + 1])
 
 
 
@@ -278,8 +279,20 @@ def report(out, suffix=""):
         if tag in known:
             continue
         v = val_of(out, tag)
-        if v:
-            rows.append((tag, ["(confirmation run)"], v))
+        if not v:
+            continue
+        # Say what the row actually is. A directory outside the current
+        # suffix is usually the same configuration measured under a
+        # different stopping rule, and calling that a confirmation run
+        # invites it to be read as a repeat of the row above it.
+        base_names = {t for t, _ in TRIALS}
+        if tag in base_names:
+            why = f"(same config, patience {PATIENCE_DEFAULT})"
+        elif "_s" in tag:
+            why = f"(seed {tag.rsplit('_s', 1)[1]})"
+        else:
+            why = "(other protocol)"
+        rows.append((tag, [why], v))
     done = [r for r in rows if r[2]]
     print(f"\n  {'trial':<{w}} {'val MSE':>9} {'val CI':>8} "
           f"{'support':>8} {'best ep':>8} {'ran':>5}   overrides")
