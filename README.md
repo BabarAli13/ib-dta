@@ -13,9 +13,9 @@ a ten-configuration sweep selected on validation only, and the five
 canonical folds measured again at the capacity setting it found. Seed
 replication of the top candidates is running; until it finishes, the
 choice between the best few configurations is not settled. KIBA is stopped
-part-way. Baselines have not started, and they are the most important
-thing outstanding, because they are what would turn the accuracy gap from
-a bound into a measurement.
+part-way. Two baseline arms are running, the pooled-decoder control and
+a DeepDTA reimplementation, which are what turn the accuracy gap from a
+bound into a measurement; neither has results yet.
 
 Every number in this file is measured at full scale. Nothing here is a
 demonstration run.
@@ -164,6 +164,56 @@ additive constraint and the encoder generation are confounded, and
 separating them needs pooled baselines trained under identical conditions.
 Until that exists, the honest reading is that the gap is an upper bound on
 the price of exact attribution, not a measurement of it.
+
+### Measuring the bound instead of asserting it (running)
+
+The 0.124 above is a bound because the only pooled number available was a
+published one, measured on a different fold assignment with a different
+budget in a different codebase. Two runs are closing that.
+
+**The decoder in isolation.** `IB.DECODER: pooled` swaps the additive
+decode for DrugBAN's bilinear contraction on the *same* encoder objects,
+loader, splits, optimiser, schedule and stopping rule, so the decoder is
+the only difference between the two rows rather than one difference among
+four. The upstream repo was not used for this: it needs `dgllife` and a
+second data path, and then the arms would differ in more than the thing
+being measured.
+
+```bash
+python run_control.py           # 5 folds x {h=128, h=256}
+python run_control.py --list
+```
+
+Note the parameter counts when reading the result. DrugBAN's decoder is
+larger at equal width, 855,044 against 424,579, because its bilinear
+layer expands by k=3 and its head is 512 wide. The asymmetry favours the
+control, so a win for the pooled arm is partly capacity and a tie is
+better than it looks.
+
+This arm also supplies the faithfulness comparison, which is the point of
+the paper rather than a side effect. The pooled model has no additive
+decomposition, so the deletion audit is applied to its attention map,
+which is the object a reader of a published heatmap is invited to
+interpret. AFS says whether deleting the contacts that map highlights
+matters more than deleting random ones; the residual says how far the
+prediction moves from what the map implies. For the additive decoder both
+are settled by algebra. For this one they are measurements.
+
+**A published architecture end to end.** `run_deepdta.py` retrains
+DeepDTA on the same rows. It is a reimplementation rather than the
+authors' code, so its row belongs beside the quoted 0.261 and not in
+place of it; where the two disagree, the disagreement measures how much
+of a published comparison table is protocol. No graph library and no
+pretrained weights, so it trains on a free GPU in under an hour a fold.
+
+```bash
+python run_deepdta.py --out ./result
+python run_deepdta.py --list
+```
+
+DeepDTA max-pools its features and has no interaction map, so its
+support, AFS and polarity are written as `null` rather than zero. It is
+an accuracy anchor, not a faithfulness comparison.
 
 ### What tuning recovers, and where it stops
 
@@ -376,6 +426,9 @@ install in seconds.
 | `run_davis.py` | The full Davis queue, resumable across session-limited free GPUs |
 | `run_tune.py` | Single-factor hyperparameter sweep, selected on validation only, `--patience` tags its own results |
 | `run_final.py` | The five canonical folds at the tuned setting, with the audit on |
+| `run_control.py` | The pooled decoder on shared encoders: the controlled comparison |
+| `pooled_decoder.py` | DrugBAN's BANLayer and MLP head, masked, with deletion support |
+| `run_deepdta.py` | DeepDTA retrained on our splits, runs on a free GPU |
 | `audit_run.py` | Deletion audit on an existing checkpoint, in seconds rather than retraining for hours |
 | `keepawake.py` | Stops Windows sleeping underneath an unattended run |
 | `collect_results.py` | Turns finished runs into summary tables and LaTeX fragments |
@@ -542,6 +595,14 @@ python run_final.py --list                     # the paper row, formatted
 log cannot influence the choice even by being read. `run_final.py` turns
 the test evaluation and the deletion audit back on.
 
+Then the baseline arms, which do not depend on each other and can run on
+different machines:
+
+```bash
+python run_control.py                          # pooled decoder, 10 runs
+python run_deepdta.py --out ./result           # DeepDTA, 5 folds
+```
+
 On Windows, run long jobs through Task Scheduler as SYSTEM rather than
 from a console. A console job dies with its login session, and the
 machine will sleep underneath it unless something holds a power request;
@@ -604,13 +665,14 @@ whether or not IB-DTA wins on accuracy.
    training you also need `IB.CHECKPOINT_CHUNKS: true`, which is the
    default. See finding 5 — the analytic figure is the wrong number to
    size a GPU against. If you still OOM, lower `CHUNK_Q` or the batch size.
-2. **Baselines are the main gap.** No baseline implementation ships here,
-   so the controlled-retraining comparison cannot be produced from this
-   repo. That now matters more than it did: IB-DTA is 27-60% behind
-   published models on the canonical protocol, a ten-configuration sweep
-   has shown where tuning stops paying, and without pooled baselines
-   trained under identical conditions the remainder cannot be separated
-   between the additive constraint and the encoder generation.
+2. **Baselines are being measured, not yet measured.** Two arms ship
+   here now: the pooled decoder on shared encoders (`run_control.py`) and
+   a DeepDTA reimplementation on the same splits (`run_deepdta.py`).
+   Until both finish, IB-DTA is 27-60% behind published models on the
+   canonical protocol and the remainder of that gap cannot be separated
+   between the additive constraint and the encoder generation. Neither
+   arm covers the strongest baselines: MGraphDTA and NHGNN-DTA are still
+   quoted, not re-run.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
 4. **Early stopping is a protocol choice, not a convenience.** On
