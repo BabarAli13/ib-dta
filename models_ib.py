@@ -74,14 +74,34 @@ class IBDTA(nn.Module):
             drug_out = self.drug_encoder.output_feats
             prot_out = self.protein_encoder.output_feats
 
-        self.bottleneck = InteractionBottleneck(
-            v_dim=drug_out, q_dim=prot_out,
-            h_dim=ib["H_DIM"], heads=ib["HEADS"],
-            selection=ib["SELECTION"], budget_k=ib["BUDGET_K"],
-            adaptive_budget=ib["ADAPTIVE_BUDGET"],
-            out_dim=1, dropout=ib["DROPOUT"],
-            chunk_q=ib.get("CHUNK_Q", 0),
-            checkpoint_chunks=ib.get("CHECKPOINT_CHUNKS", True))
+        # IB.DECODER selects what sits on top of the shared encoders, and
+        # it is the only thing that differs between the two rows of the
+        # controlled comparison. "pooled" is DrugBAN's bilinear
+        # contraction; "additive" is this paper's decode.
+        self.decoder_kind = ib.get("DECODER", "additive")
+        if self.decoder_kind not in ("additive", "pooled"):
+            raise ValueError("IB.DECODER must be 'additive' or 'pooled', "
+                             f"got {self.decoder_kind!r}")
+        # Whether attribution is exact by construction. train_ib.py reads
+        # this to decide whether a violated deletion bound is a bug to
+        # investigate or the measurement being taken.
+        self.exact = self.decoder_kind == "additive"
+
+        if self.decoder_kind == "pooled":
+            from pooled_decoder import PooledBilinearDecoder
+            self.bottleneck = PooledBilinearDecoder(
+                v_dim=drug_out, q_dim=prot_out,
+                h_dim=ib["H_DIM"], heads=ib["HEADS"],
+                out_dim=1, dropout=ib["DROPOUT"])
+        else:
+            self.bottleneck = InteractionBottleneck(
+                v_dim=drug_out, q_dim=prot_out,
+                h_dim=ib["H_DIM"], heads=ib["HEADS"],
+                selection=ib["SELECTION"], budget_k=ib["BUDGET_K"],
+                adaptive_budget=ib["ADAPTIVE_BUDGET"],
+                out_dim=1, dropout=ib["DROPOUT"],
+                chunk_q=ib.get("CHUNK_Q", 0),
+                checkpoint_chunks=ib.get("CHECKPOINT_CHUNKS", True))
 
     # ---- forward ---------------------------------------------------------
     def forward(self, node_feats, adj, node_mask, tokens, lengths=None,
@@ -105,9 +125,16 @@ class IBDTA(nn.Module):
     def sparsity_penalty(self, alpha):
         return self.bottleneck.sparsity_penalty(alpha)
 
-    @staticmethod
-    def support_size(alpha):
-        return InteractionBottleneck.support_size(alpha)
+    def support_size(self, alpha):
+        """Delegate to whichever decoder is installed.
+
+        This was a staticmethod calling InteractionBottleneck directly,
+        which meant the pooled control reported a sparse support: the
+        measure counted positive selection mass in an object that is a
+        signed attention map over every pair. A control that silently
+        reports the treatment's metric is worse than no control.
+        """
+        return type(self.bottleneck).support_size(alpha)
 
 
 # --------------------------------------------------------------------------

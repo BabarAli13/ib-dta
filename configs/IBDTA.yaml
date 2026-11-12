@@ -23,6 +23,15 @@ PROTEIN:
 
 # The interaction bottleneck -- the part that differs from DrugBAN.
 IB:
+  DECODER: additive       # additive | pooled
+                          # "pooled" replaces this paper's decode with
+                          # DrugBAN's bilinear contraction, on the same
+                          # encoders, loader, splits and schedule. It is
+                          # the control for Table 3: with everything else
+                          # shared, the decoder is the only difference, so
+                          # the accuracy difference is attributable rather
+                          # than confounded with protocol and codebase as
+                          # a quoted published number would be.
   H_DIM: 128
   HEADS: 1                # more heads = larger support = weaker bottleneck
   SELECTION: entmax       # entmax | topk | softmax (dense ablation)

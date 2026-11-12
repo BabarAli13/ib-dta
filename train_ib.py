@@ -355,14 +355,28 @@ def main():
             idx = flat.abs().topk(min(5, flat.shape[1]), -1).indices
             drop.reshape(contrib.shape[0], -1).scatter_(1, idx, True)
             _, ok, det = FA.check_additive_exactness(predict, contrib, drop)
+            exact_by_construction = getattr(model, "exact", True)
             audit = {"afs": float(r["afs"]), "polarity": float(r["polarity"]),
                      "exact_ok": bool(ok),
+                     "exact_by_construction": bool(exact_by_construction),
                      "max_residual": float(det["max_residual"]),
                      "relative_residual": float(det["relative_residual"])}
             print(f"AUDIT: AFS={audit['afs']:+.4f}  "
                   f"polarity={audit['polarity']:+.4f}  "
                   f"exact={'YES' if ok else 'NO'}  "
                   f"resid={audit['max_residual']:.2e}")
+            # For the additive decoder a violated bound is a bug. For the
+            # pooled control it is the measurement: the attention map is
+            # what a reader interprets, and the residual says how far the
+            # prediction moves from what that map implies.
+            if not exact_by_construction:
+                print("  (pooled control: the residual above is the "
+                      "measured infidelity of the attention map, not a "
+                      "defect. Exactness is not claimed for this decoder.)")
+            elif not ok:
+                print("  (exactness FAILED for an additive decoder, which "
+                      "should be impossible. Investigate before using any "
+                      "number from this run.)")
         except Exception as e:
             # A failed audit must not cost the training run it followed.
             audit = {"audit_error": f"{type(e).__name__}: {e}"}
