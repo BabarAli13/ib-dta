@@ -167,7 +167,7 @@ def one_fold(root, split, out, tag, args, device):
                 model(d.to(device), p.to(device)), y.to(device))
             loss.backward()
             opt.step()
-            tot += float(loss) * len(y)
+            tot += loss.detach().item() * len(y)
             n += len(y)
         m = evaluate(model, lva, device)
         hist.append({"epoch": ep, "train_loss": tot / n,
