@@ -1,0 +1,22 @@
+{
+  "mse": 0.2594280242919922,
+  "rmse": 0.5093407742287988,
+  "ci": 0.8739779549005251,
+  "r2": 0.6763276497714624,
+  "pearson": 0.8234177155329884,
+  "spearman": 0.6744422012614657,
+  "support": 23622.423828125,
+  "afs": 0.8541652034055254,
+  "polarity": 0.9827260498881991,
+  "exact_ok": false,
+  "exact_by_construction": false,
+  "max_residual": 560.2650756835938,
+  "relative_residual": 35951.04708948189,
+  "best_epoch": 114,
+  "data": "davis",
+  "split": "benchmark/fold1",
+  "selection": "entmax",
+  "budget_k": 32,
+  "adaptive": true,
+  "params": 855044
+}
