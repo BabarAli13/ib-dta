@@ -22,6 +22,7 @@ done
 
 import argparse
 import json
+import math
 import os
 import random
 import time
@@ -195,6 +196,8 @@ def main():
     # run finishes, so a completed run never looks resumable.
     last_path = os.path.join(out_dir, "last.pt")
     prev_path = os.path.join(out_dir, "last.prev.pt")
+    best_path = os.path.join(out_dir, "best.pt")
+    best_prev = os.path.join(out_dir, "best.prev.pt")
     cfg_sig = json.dumps(cfg, sort_keys=True)
     # Two generations, not one. A temporary file plus os.replace protects
     # against a crash during the write, but not against an abrupt power
@@ -230,6 +233,19 @@ def main():
                   f"(best so far epoch {best['epoch']})"
                   + ("  [fallback checkpoint]"
                      if path == prev_path else ""))
+            # The resumed best["score"] gates every future write to
+            # best.pt. If the weights behind that score cannot be loaded,
+            # inheriting it means the run will never rewrite the file and
+            # will test whatever is in it. Reset instead, so training
+            # rebuilds the checkpoint from here.
+            if cfg["RESULT"]["SAVE_MODEL"] and os.path.exists(best_path):
+                try:
+                    torch.load(best_path, map_location="cpu")
+                except Exception as e:
+                    print(f"  best.pt is unreadable ({type(e).__name__}); "
+                          f"discarding the inherited best score so it is "
+                          f"rebuilt rather than tested as-is")
+                    best = {"score": -float("inf"), "epoch": 0}
             break
         else:
             if os.path.exists(last_path) or os.path.exists(prev_path):
@@ -273,7 +289,26 @@ def main():
         if score > best["score"]:
             best = {"score": float(score), "epoch": epoch}
             if cfg["RESULT"]["SAVE_MODEL"]:
-                torch.save(model.state_dict(), os.path.join(out_dir, "best.pt"))
+                # Same discipline as last.pt, and for a sharper reason.
+                # A bare torch.save straight to best.pt can be caught
+                # mid-write by a power loss, and on resume best["score"]
+                # comes back from last.pt, so unless a later epoch beats
+                # it the damaged file is never rewritten and the test
+                # evaluation silently loads it. That produced a KIBA fold
+                # reporting MSE 2.52 at CI 0.832: ranking intact,
+                # calibration destroyed, which is what a partly written
+                # state dict looks like.
+                btmp = best_path + ".tmp"
+                with open(btmp, "wb") as fh:
+                    torch.save(model.state_dict(), fh)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                if os.path.exists(best_path):
+                    try:
+                        os.replace(best_path, best_prev)
+                    except OSError:
+                        pass
+                os.replace(btmp, best_path)
 
         # Write the resume point after every epoch, via a temporary file so
         # a crash during the write cannot leave a half-written checkpoint
@@ -309,9 +344,27 @@ def main():
                   f"(best was epoch {best['epoch']})")
             break
 
-    ckpt = os.path.join(out_dir, "best.pt")
+    ckpt = best_path
     if os.path.exists(ckpt):
         model.load_state_dict(torch.load(ckpt, map_location=device))
+        # Verify the loaded weights actually are the ones that earned the
+        # recorded score, by recomputing the validation metric they were
+        # selected on. A checkpoint damaged by a power loss can still
+        # unpickle, and the resulting test number looks like a result
+        # rather than a failure: one KIBA fold reported MSE 2.52 at CI
+        # 0.832, ranking intact and calibration destroyed. Nothing
+        # downstream can tell that apart from a bad decoder, so the check
+        # belongs here, before test_metrics.json exists.
+        if best["epoch"] > 0 and math.isfinite(best["score"]):
+            chk = evaluate(model, loaders["val"], task, device)
+            got = -chk["mse"] if task == "regression" else chk["auroc"]
+            if abs(got - best["score"]) > 1e-3 * max(1.0, abs(best["score"])):
+                raise SystemExit(
+                    f"  ABORT: best.pt does not reproduce the score it was "
+                    f"selected on (recorded {best['score']:.6f} at epoch "
+                    f"{best['epoch']}, recomputed {got:.6f}). The "
+                    f"checkpoint is damaged. Delete {out_dir} and rerun "
+                    f"that fold; no test metrics were written.")
     if args.skip_test:
         # Selecting a configuration by a test score and then reporting
         # that score is the usual way a benchmark number stops meaning
