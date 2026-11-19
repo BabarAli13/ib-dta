@@ -7,15 +7,17 @@ explanation is the mechanism rather than a description of it.
 
 ## Status
 
-Theory and dataset audits are measured and reproducible on CPU in about
-half an hour. **Davis is complete:** 40 runs at the shipped configuration,
-a ten-configuration sweep selected on validation only, and the five
-canonical folds measured again at the capacity setting it found. Seed
-replication of the top candidates is running; until it finishes, the
-choice between the best few configurations is not settled. KIBA is stopped
-part-way. Two baseline arms are running, the pooled-decoder control and
-a DeepDTA reimplementation, which are what turn the accuracy gap from a
-bound into a measurement; neither has results yet.
+**Davis is complete**, including both baseline arms. 40 runs at the
+shipped configuration, a ten-configuration sweep selected on validation
+only with seed replication of the leaders, the five canonical folds at
+the setting it found, the pooled-decoder control over those same folds,
+and a DeepDTA reimplementation retrained on them. The accuracy cost of
+exact attribution is therefore a measurement rather than a bound.
+
+**KIBA is running**, two of five folds in. **The counterfactual
+evaluation has not been run** and is the largest outstanding gap; the
+strongest baselines, MGraphDTA and NHGNN-DTA, are still quoted rather
+than retrained.
 
 Every number in this file is measured at full scale. Nothing here is a
 demonstration run.
@@ -125,95 +127,119 @@ Davis, full scale, default configuration (adaptive entmax):
 
 ### What it costs on accuracy
 
-Canonical DeepDTA fold protocol, five folds. These are the only numbers
-here directly comparable with published Davis tables, which is why they
-are reported against the published models rather than against our own
-retraining.
+Canonical DeepDTA fold protocol, five folds, Davis. Rows marked
+**measured here** were trained by us on the same partitions; the rest are
+quoted from the cited works and are not directly comparable to each other.
 
-| Model | MSE | CI |
-|---|---|---|
-| NHGNN-DTA* | 0.196 | 0.914 |
-| MGraphDTA | 0.207 | 0.900 |
-| GraphDTA (GIN) | 0.229 | 0.893 |
-| DeepDTA | 0.261 | 0.878 |
-| **IB-DTA** (tuned) | **0.331 ± 0.035** | **0.850 ± 0.013** |
-| IB-DTA (shipped config) | 0.362 ± 0.012 | 0.840 ± 0.005 |
+| Model | MSE | CI | measured here |
+|---|---|---|---|
+| NHGNN-DTA* | 0.196 | 0.914 | |
+| MGraphDTA | 0.207 | 0.900 | |
+| GraphDTA (GIN) | 0.229 | 0.893 | |
+| **pooled decode, our encoders** | **0.253 ± 0.006** | 0.880 ± 0.004 | yes |
+| **DeepDTA, retrained** | **0.253 ± 0.007** | 0.884 ± 0.005 | yes |
+| pooled decode, h=256 | 0.257 ± 0.011 | 0.882 ± 0.005 | yes |
+| DeepDTA (published) | 0.261 | 0.878 | |
+| **IB-DTA** (tuned, h=256) | **0.331 ± 0.035** | 0.850 ± 0.013 | yes |
+| IB-DTA (shipped config) | 0.362 ± 0.012 | 0.840 ± 0.005 | yes |
 
 <sub>* different split protocol, included because omitting the strongest
 reported result would flatter ours.</sub>
 
-That is 27% worse MSE than the oldest baseline and 60% worse than
-MGraphDTA. We state it plainly because the alternative is for a reader to
-discover it.
+IB-DTA is behind, and we state it plainly because the alternative is for a
+reader to discover it.
 
-**The gap is not caused by the sparsity.** The dense control uses the same
-architecture with no bottleneck at all, every one of the 21,012 contacts
-retained, and scores 0.4759 on cold-target: *worse* than k=32 at 0.4663.
-Removing the bottleneck recovers nothing. Whatever costs the accuracy sits
-in the additive decoder or in the encoders, not in the selection.
+**The gap is not the sparsity.** The dense control uses the same
+architecture with no bottleneck, all 21,012 contacts retained, and scores
+0.4759 on cold-target against 0.4663 at k=32. Removing the bottleneck
+recovers nothing.
 
-Tuning recovers about 0.031 MSE of that on the five folds, and the sweep
-below shows where it stops paying. So the two claims separate:
+**The gap is not the encoders either.** This is the result that took the
+longest to get and it is the one that matters. Swapping only the decoder,
+on the *same* encoder objects, loader, folds, optimiser, schedule and
+stopping rule, the pooled arm reaches 0.253 and a retrained DeepDTA
+reaches 0.253. These encoders with a conventional decoder are worth what
+a published convolutional architecture is worth.
 
-- **Sparsity is free.** Three seeds per budget, dense ranks 3rd of 7.
-- **Interpretability by construction costs accuracy**, here +0.124 MSE
-  against the strongest comparable pooled model.
+**So the additive decode carries the whole difference**, and it is now a
+measurement rather than a bound:
 
-What cannot yet be said is which of the two causes is responsible. The
-additive constraint and the encoder generation are confounded, and
-separating them needs pooled baselines trained under identical conditions.
-Until that exists, the honest reading is that the gap is an upper bound on
-the price of exact attribution, not a measurement of it.
+| paired comparison, 5 folds | Δ MSE | 95% CI | folds |
+|---|---|---|---|
+| additive − pooled (h=128) | **+0.0775** | [+0.036, +0.119] | 5/5 |
+| additive − DeepDTA retrained | +0.0783 | [+0.032, +0.125] | 5/5 |
+| pooled − DeepDTA retrained | +0.0008 | [−0.013, +0.014] | n.s. |
+| shipped − tuned (h=256) | +0.0310 | [−0.009, +0.071] | 4/5 |
 
-### Measuring the bound instead of asserting it (running)
+Two independent routes give +0.078 to three decimals. The 0.124 against
+MGraphDTA stays an upper bound, since that architecture has not been
+retrained here.
 
-The 0.124 above is a bound because the only pooled number available was a
-published one, measured on a different fold assignment with a different
-budget in a different codebase. Two runs are closing that.
+Our retrained DeepDTA reaching 0.253 against the authors' reported 0.261
+is what licenses reading the quoted rows as comparable at all.
 
-**The decoder in isolation.** `IB.DECODER: pooled` swaps the additive
-decode for DrugBAN's bilinear contraction on the *same* encoder objects,
-loader, splits, optimiser, schedule and stopping rule, so the decoder is
-the only difference between the two rows rather than one difference among
-four. The upstream repo was not used for this: it needs `dgllife` and a
-second data path, and then the arms would differ in more than the thing
-being measured.
+### What +0.078 MSE buys
 
-```bash
-python run_control.py           # 5 folds x {h=128, h=256}
-python run_control.py --list
-```
+Same two arms, same five folds, same deletion audit.
 
-Note the parameter counts when reading the result. DrugBAN's decoder is
-larger at equal width, 855,044 against 424,579, because its bilinear
-layer expands by k=3 and its head is 512 wide. The asymmetry favours the
-control, so a win for the pooled arm is partly capacity and a tie is
-better than it looks.
+| | pooled bilinear | additive (ours) |
+|---|---|---|
+| test MSE | **0.253** | 0.331 |
+| AFS, mean | +0.714 | +0.746 |
+| AFS, range across folds | 0.216 | **0.057** |
+| contacts ranked | 23,622 | **40.6** |
+| magnitudes | none | **exact to 1e-7** |
+| map identifiable | no | **yes** |
 
-This arm also supplies the faithfulness comparison, which is the point of
-the paper rather than a side effect. The pooled model has no additive
-decomposition, so the deletion audit is applied to its attention map,
-which is the object a reader of a published heatmap is invited to
-interpret. AFS says whether deleting the contacts that map highlights
-matters more than deleting random ones; the residual says how far the
-prediction moves from what the map implies. For the additive decoder both
-are settled by algebra. For this one they are measurements.
+**A result we did not expect, reported because it narrows our own claim.**
+AFS is +0.714 for the pooled map against +0.746 for ours. On average the
+two rank contacts comparably, so the familiar line that bilinear attention
+maps are uninformative is *not* supported by this measurement. What
+separates them is that the pooled score is four times less stable across
+folds, it spreads over 582× more contacts, and it carries no magnitudes:
+an attention weight is not in pKd units, so no quantity on that map
+predicts what deletion does.
 
-**A published architecture end to end.** `run_deepdta.py` retrains
-DeepDTA on the same rows. It is a reimplementation rather than the
-authors' code, so its row belongs beside the quoted 0.261 and not in
-place of it; where the two disagree, the disagreement measures how much
-of a published comparison table is protocol. No graph library and no
-pretrained weights, so it trains on a free GPU in under an hour a fold.
+We report no exactness residual for the pooled arm. A deletion bound can
+only be violated by a quantity that claims to satisfy it, and quoting one
+would dress a definition as a measurement.
 
-```bash
-python run_deepdta.py --out ./result
-python run_deepdta.py --list
-```
+Two costs of the method that this does not excuse: IB-DTA is five times
+less stable across Davis folds than the pooled arm (range 0.0866 against
+0.0169), and it is roughly ten times slower per epoch, since the decoder
+scores every selected contact where the contraction evaluates one head
+once.
 
-DeepDTA max-pools its features and has no interaction map, so its
-support, AFS and polarity are written as `null` rather than zero. It is
-an accuracy anchor, not a faithfulness comparison.
+### KIBA (in progress)
+
+Same two arms on KIBA's canonical folds, interleaved by fold so that
+stopping at any point leaves matched pairs.
+
+| fold | additive h=256 | pooled h=128 |
+|---|---|---|
+| 0 | 0.2282 | 0.2127 |
+| 1 | 0.2253 | discarded, see below |
+| 2–4 | running | pending |
+| mean | 0.2268 ± 0.0020 | — |
+
+Two things to note early. The additive arm's spread on KIBA is ±0.0020
+against ±0.0354 on Davis, so the instability listed under known limits
+looks like a Davis small-data artefact rather than a property of the
+method. And on fold 0 the gap is +0.0155 against +0.0775 on Davis, which
+would mean the price of exact attribution falls as the dataset grows. One
+fold is not a result; the paired test needs the remaining folds.
+
+**One pooled fold was discarded, and the reason is worth recording.** It
+reported MSE 2.5183 at CI 0.832: ranking intact, calibration destroyed,
+which is not what a worse decoder looks like. `best.pt` was written by a
+bare `torch.save` to its final path, a power cut caught it mid-write, and
+on resume the inherited best score meant the damaged file was never
+rewritten and was then loaded for the test evaluation. It is fixed three
+ways: atomic fsynced writes with a retained previous generation, resume
+discarding a best score whose weights will not load, and a check that
+reruns the loaded checkpoint on the validation set before any test metric
+is computed, aborting on mismatch. The third is the one that matters,
+since only it stops damage being mistaken for a measurement.
 
 ### What tuning recovers, and where it stops
 
@@ -280,11 +306,14 @@ Rerunning the deletion audit on all five tuned folds:
 | AFS | +0.746 ± 0.023 |
 | exactness residual | 1.2e-07 worst, 2.1e-08 best |
 
-The accuracy was not bought back from the property the architecture exists
-for. Fold 1 is the outlier throughout: it stopped earliest at epoch 48,
-settled on 80.1 contacts against 23.8 to 37.8 elsewhere, and returned the
-worst MSE of the five at 0.389. The other four lie between 0.303 and
-0.339, giving 0.316 ± 0.016 without it. We report the five-fold mean.
+The accuracy was not bought back from the property the architecture
+exists for. Fold 1 is the outlier throughout: it stopped earliest at
+epoch 48, settled on 80.1 contacts against 23.8 to 37.8 elsewhere, and
+returned the worst MSE of the five at 0.389. The retrained DeepDTA rules
+out fold difficulty, since fold 1 is its *second best* at 0.248, so the
+problem is our optimisation and not the data. The other four lie between
+0.303 and 0.339, giving 0.316 ± 0.016 without it. We report the five-fold
+mean.
 
 ### Cold-drug is a negative result, not a bug
 
@@ -665,14 +694,14 @@ whether or not IB-DTA wins on accuracy.
    training you also need `IB.CHECKPOINT_CHUNKS: true`, which is the
    default. See finding 5 — the analytic figure is the wrong number to
    size a GPU against. If you still OOM, lower `CHUNK_Q` or the batch size.
-2. **Baselines are being measured, not yet measured.** Two arms ship
-   here now: the pooled decoder on shared encoders (`run_control.py`) and
-   a DeepDTA reimplementation on the same splits (`run_deepdta.py`).
-   Until both finish, IB-DTA is 27-60% behind published models on the
-   canonical protocol and the remainder of that gap cannot be separated
-   between the additive constraint and the encoder generation. Neither
-   arm covers the strongest baselines: MGraphDTA and NHGNN-DTA are still
-   quoted, not re-run.
+2. **The strongest baselines are quoted, not re-run.** Two arms are
+   measured on Davis: the pooled decoder on shared encoders
+   (`run_control.py`) and a DeepDTA reimplementation on the same splits
+   (`run_deepdta.py`). Together they attribute the gap to the decode
+   rather than the encoders. MGraphDTA and NHGNN-DTA are not retrained,
+   so the 0.124 to the top of the table remains an upper bound, and the
+   counterfactual evaluation that would test whether exact attribution is
+   *actionable* rather than merely exact has not been run at all.
 3. **Heads.** More heads means a larger effective support and a weaker
    bottleneck. Keep `HEADS` at 1–2 unless ablating it.
 4. **Early stopping is a protocol choice, not a convenience.** On
@@ -687,7 +716,15 @@ whether or not IB-DTA wins on accuracy.
 5. **Seed counts vary and are stated.** The split regimes carry three to
    five seeds, the budget sweep three per point, and the scaffold row one.
    `collect_results.py` marks any cell backed by fewer than five.
-6. **The sweep ran one seed per configuration.** That is enough to rank
+6. **A damaged checkpoint can look like a result.** One KIBA fold
+   reported MSE 2.5183 at CI 0.832: ranking intact, calibration
+   destroyed, which is a partly written `best.pt` and not a worse model.
+   `train_ib.py` now writes `best.pt` atomically with fsync, keeps the
+   previous generation, discards an inherited best score whose weights
+   will not load, and reruns the loaded checkpoint on the validation set
+   before computing any test metric, aborting on mismatch. If you are
+   running on hardware that loses power, pull at least commit `ff3ef61`.
+7. **The sweep ran one seed per configuration.** That is enough to rank
    candidates coarsely and not enough to trust the ranking: the measured
    seed-to-seed sd of 0.043 is wider than most of the spread across the
    sweep. The capacity result survives because it was confirmed on all
