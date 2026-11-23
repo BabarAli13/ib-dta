@@ -145,24 +145,50 @@ def main():
                          "first guess; it is replaced per arm as soon as "
                          "that arm has finished one run.")
     ap.add_argument("--only", nargs="*", default=None)
+    ap.add_argument("--folds", nargs="*", type=int, default=None,
+                    help="restrict to these folds, e.g. --folds 4")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="replicate at another seed. The tag gains _sN, so "
+                         "a replication never overwrites the run it is "
+                         "checking, and --list keeps reporting the original "
+                         "five folds while the replicates accumulate "
+                         "separately.")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--log", default="kiba_log.txt")
     ap.add_argument("--no-live", action="store_true")
     args = ap.parse_args()
 
+    seed = str(args.seed) if args.seed is not None else SEED
+    suffix = f"_s{args.seed}" if args.seed is not None else ""
+    folds = args.folds if args.folds else FOLDS
+    arms = [a for a in ARMS if not args.only or a[0] in args.only]
+
     if args.list:
         report(args.out)
+        if suffix:
+            print(f"\n  replicates at seed {seed}:")
+            for tag, _ in arms:
+                for f in folds:
+                    p = os.path.join(out_dir(args.out, f, tag + suffix),
+                                     "test_metrics.json")
+                    if os.path.exists(p):
+                        m = json.load(open(p))
+                        print(f"    {tag+suffix:18s} fold {f}  "
+                              f"MSE {m['mse']:.4f}  CI {m['ci']:.3f}  "
+                              f"AFS {m.get('afs', float('nan')):+.3f}")
+                    else:
+                        print(f"    {tag+suffix:18s} fold {f}  pending")
         return
 
     _enable_ansi()
     keep_awake()
     live = not args.no_live and sys.stdout.isatty()
 
-    arms = [a for a in ARMS if not args.only or a[0] in args.only]
-    jobs = [(tag, over, f) for f in FOLDS for tag, over in arms
-            if not is_done(args.out, f, tag)]
-    total = len(arms) * len(FOLDS)
-    print(f"  KIBA canonical folds, seed {SEED}")
+    jobs = [(tag + suffix, over, f) for f in folds for tag, over in arms
+            if not is_done(args.out, f, tag + suffix)]
+    total = len(arms) * len(folds)
+    print(f"  KIBA canonical folds, seed {seed}"
+          + (f"  [replication, tags end {suffix}]" if suffix else ""))
     print(f"  {total - len(jobs)}/{total} runs done, {len(jobs)} to go")
     if not jobs:
         report(args.out)
@@ -183,7 +209,7 @@ def main():
         cmd = [sys.executable, "train_ib.py", "--cfg", CFG,
                "--data", DATA, "--split", split_of(f), "--tag", tag,
                "--set", "RESULT.OUTPUT_DIR", args.out,
-               *BASE, *over, "SOLVER.SEED", SEED]
+               *BASE, *over, "SOLVER.SEED", seed]
         print(f"\n{'=' * 68}\n  {tag}  fold {f}   ({i} of {len(jobs)})"
               f"   elapsed {_hms(time.time() - t0)}\n{'=' * 68}", flush=True)
         rc, dt = run_trial(cmd, f"{tag}/f{f}", i, len(jobs), MAX_EPOCH,
