@@ -148,7 +148,12 @@ def run_model(run_dir, split_csv, cfg, device, batches, dense_topn=None):
     df = pd.read_csv(split_csv)
     loader = make_loader(df, cfg, shuffle=False, verbose=False)
     max_len = cfg["PROTEIN"]["MAX_LEN"]
-    seqs = [s[:max_len].upper() for s in df.Protein]
+    # Sequences come from the dataset, not the dataframe. DTADataset drops
+    # rows whose SMILES will not parse, so df.Protein and the loader can
+    # differ in length and every sequence after the first drop would be
+    # attributed to the wrong complex. Truncated the same way the
+    # tokeniser truncates, so residue indices line up with the model's.
+    seqs = [prot[:max_len].upper() for _, prot, _ in loader.dataset.rows]
 
     row = 0
     for i, batch in enumerate(loader):
@@ -161,15 +166,16 @@ def run_model(run_dir, split_csv, cfg, device, batches, dense_topn=None):
         alpha = o["alpha"] if isinstance(o, dict) else o[2]
         B = alpha.shape[0]
         lens = pl.tolist() if torch.is_tensor(pl) else list(pl)
-        topn = None
-        if dense_topn is not None:
-            topn = dense_topn[row:row + B]
+        # row is the index of this batch's first complex, so the matched
+        # support slice and the sequence lookup both key off it. It is
+        # advanced once per batch, after the yields: advancing it inside
+        # the inner loop while also adding b double-counted the offset.
+        topn = dense_topn[row:row + B] if dense_topn is not None else None
         sel = selected_residues(alpha.cpu(), alpha.shape[-1], topn)
         for b in range(B):
             n_out = max(int(lens[b]) - CROP, 1)
             yield sel[b], seqs[row + b], n_out
-            row += 1
-        model_support = None       # silence linters; support travels in sel
+        row += B
 
 
 def enrichment(run_dir, split_csv, cfg, device, batches, dense_topn=None,
