@@ -130,7 +130,7 @@ def evaluate(model, loader, device):
     return regression_metrics(torch.cat(ys), torch.cat(ps))
 
 
-def one_fold(root, split, out, tag, args, device):
+def one_fold(root, split, out, tag, args, device, data="davis"):
     folder = os.path.join(root, split)
     tr = pd.read_csv(os.path.join(folder, "train.csv"))
     va = pd.read_csv(os.path.join(folder, "val.csv"))
@@ -154,7 +154,7 @@ def one_fold(root, split, out, tag, args, device):
     print(f"  parameters: {sum(p.numel() for p in model.parameters()):,}",
           flush=True)
 
-    run_dir = os.path.join(out, "davis", f"{split}_{tag}")
+    run_dir = os.path.join(out, data, f"{split}_{tag}")
     os.makedirs(run_dir, exist_ok=True)
     best = {"val_mse": math.inf, "epoch": 0}
     hist, t0 = [], time.time()
@@ -195,7 +195,7 @@ def one_fold(root, split, out, tag, args, device):
         # features and has no interaction map, so any value here would be
         # invented rather than measured.
         json.dump({**test, "best_epoch": best["epoch"],
-                   "data": "davis", "split": split, "model": "DeepDTA",
+                   "data": data, "split": split, "model": "DeepDTA",
                    "reimplementation": True,
                    "support": None, "afs": None, "polarity": None,
                    "exact_ok": None, "relative_residual": None}, f, indent=2)
@@ -204,12 +204,18 @@ def one_fold(root, split, out, tag, args, device):
     return test["mse"]
 
 
-def report(out, tag):
+# What the authors report, per dataset, on their own fold assignment.
+# Printing one of these beside a run on the other dataset invites exactly
+# the comparison this script exists to make properly.
+PUBLISHED = {"davis": 0.261, "kiba": 0.194}
+
+
+def report(out, tag, data="davis"):
     vals = []
     print(f"\n  fold   test MSE      CI    epochs")
     print(f"  {'-' * 38}")
     for f in range(5):
-        p = os.path.join(out, "davis", f"benchmark/fold{f}_{tag}",
+        p = os.path.join(out, data, f"benchmark/fold{f}_{tag}",
                          "test_metrics.json")
         if not os.path.exists(p):
             print(f"  {f}      pending")
@@ -223,7 +229,10 @@ def report(out, tag):
         print(f"  {'-' * 38}")
         print(f"  mean   {s.mean(vals):.4f} +/- {s.stdev(vals):.4f} "
               f"over {len(vals)} folds")
-        print(f"\n  published DeepDTA on the authors' own folds: 0.261")
+        ref = PUBLISHED.get(data)
+        if ref is not None:
+            print(f"\n  published DeepDTA on {data}, authors' own folds: "
+                  f"{ref:.3f}")
 
 
 def main():
@@ -240,24 +249,26 @@ def main():
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
 
+    data = os.path.basename(os.path.normpath(args.root))
     if args.list:
-        report(args.out, args.tag)
+        report(args.out, args.tag, data)
         return
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"  DeepDTA reimplementation on our splits, device={device}")
+    print(f"  DeepDTA reimplementation on our {data} splits, "
+          f"device={device}")
     print(f"  epochs<={args.epochs}  patience={args.patience}  "
           f"seed={args.seed}")
     for f in args.folds:
         split = f"benchmark/fold{f}"
-        done = os.path.join(args.out, "davis", f"{split}_{args.tag}",
+        done = os.path.join(args.out, data, f"{split}_{args.tag}",
                             "test_metrics.json")
         if os.path.exists(done):
             print(f"  fold {f} already done, skipping")
             continue
         print(f"\n{'=' * 60}\n  fold {f}\n{'=' * 60}", flush=True)
-        one_fold(args.root, split, args.out, args.tag, args, device)
-    report(args.out, args.tag)
+        one_fold(args.root, split, args.out, args.tag, args, device, data)
+    report(args.out, args.tag, data)
 
 
 if __name__ == "__main__":
