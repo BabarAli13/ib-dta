@@ -269,6 +269,83 @@ def summarise(df, label):
             "frac_sig": float((df.p < 0.05).mean())}
 
 
+def diagnose(run_dir, split_csv, cfg, device, batches):
+    """Is the selection positional, and does it depend on the ligand?
+
+    Two artefacts would explain a pocket enrichment at chance without the
+    model attending to anything biological, and both must be excluded
+    before the enrichment is interpreted at all.
+
+    Positional collapse: if the selected windows sit at the same relative
+    place in every protein, the map is reading sequence position rather
+    than sequence content, and the pocket overlap is then whatever that
+    position happens to coincide with.
+
+    Ligand invariance: the paper attributes affinity to atom-residue
+    contacts of a pair. If the residues selected against one target are
+    the same whichever ligand is docked, the map is a property of the
+    protein alone and is not an interaction explanation, whatever its
+    deletion bound says.
+    """
+    import collections
+    pos, by_target = [], collections.defaultdict(list)
+    for sel, seq, n_out in run_model(run_dir, split_csv, cfg, device,
+                                     batches):
+        sel = {j for j in sel if j < n_out}
+        if not sel:
+            continue
+        pos.extend(j / n_out for j in sel)
+        by_target[seq].append(sel)
+
+    pos = np.array(pos)
+    print(f"\n  positional distribution of selected windows "
+          f"({len(pos)} windows)")
+    edges = np.linspace(0, 1, 11)
+    hist, _ = np.histogram(pos, bins=edges)
+    frac = hist / max(hist.sum(), 1)
+    for i in range(10):
+        bar = "#" * int(round(frac[i] * 200))
+        print(f"    {edges[i]:.1f}-{edges[i+1]:.1f}  {frac[i]:6.3f}  {bar}")
+    print(f"    uniform would be 0.100 in every bin; "
+          f"max bin {frac.max():.3f}, min {frac.min():.3f}")
+
+    # Ligand dependence: Jaccard between the selections of two different
+    # ligands against the same target, against the same statistic for
+    # selections against different targets.
+    same, diff = [], []
+    tgts = [t for t, v in by_target.items() if len(v) >= 2]
+    rng = random.Random(0)
+    for t in tgts[:400]:
+        v = by_target[t]
+        for _ in range(min(5, len(v))):
+            a, b = rng.sample(range(len(v)), 2)
+            u = len(v[a] | v[b])
+            if u:
+                same.append(len(v[a] & v[b]) / u)
+    keys = list(by_target)
+    for _ in range(min(2000, len(keys) * 4)):
+        if len(keys) < 2:
+            break
+        t1, t2 = rng.sample(keys, 2)
+        s1 = rng.choice(by_target[t1])
+        s2 = rng.choice(by_target[t2])
+        u = len(s1 | s2)
+        if u:
+            diff.append(len(s1 & s2) / u)
+    print(f"\n  Jaccard overlap of selected windows")
+    if same:
+        print(f"    same target, different ligand   {np.mean(same):.3f} "
+              f"(n={len(same)})")
+    if diff:
+        print(f"    different targets               {np.mean(diff):.3f} "
+              f"(n={len(diff)})")
+    if same:
+        print(f"\n    1.000 for the same target would mean the selection "
+              f"ignores the ligand entirely,")
+        print(f"    and the attribution is a property of the protein "
+              f"rather than of the pair.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", help="additive run directory (best.pt + "
@@ -277,6 +354,10 @@ def main():
                                       "additive model's support")
     ap.add_argument("--audit", action="store_true",
                     help="motif detection rate only; no model needed")
+    ap.add_argument("--diagnose", action="store_true",
+                    help="positional bias and ligand dependence of the "
+                         "selection; run this before interpreting any "
+                         "enrichment")
     ap.add_argument("--data", default="davis")
     ap.add_argument("--root", default="./datasets")
     ap.add_argument("--batches", type=int, default=12,
@@ -313,6 +394,10 @@ def main():
         csv = os.path.join(os.path.dirname(folder.rstrip("/\\")), "test.csv")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n  {data}/{split}   resolution {RF} residues per window")
+
+    if args.diagnose:
+        diagnose(args.run, csv, cfg, device, args.batches)
+        return
 
     crits = (["overlap", "center"] if args.criterion == "both"
              else [args.criterion])
