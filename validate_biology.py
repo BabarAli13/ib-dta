@@ -81,7 +81,7 @@ def hypergeom_sf(k, M, n, N):
     return min(1.0, max(0.0, acc))
 
 
-def pocket_output_indices(seq, n_out, criterion="overlap"):
+def pocket_output_indices(seq, n_out, criterion="overlap", strict=False):
     """Output positions counted as being in the ATP pocket.
 
     Two criteria, because the choice sets the chance level and therefore
@@ -103,7 +103,7 @@ def pocket_output_indices(seq, n_out, criterion="overlap"):
     Returns (indices, pocket_residue_count), or (None, None) when the
     kinase domain could not be resolved.
     """
-    pocket = KM.pocket_residues(seq)
+    pocket = KM.pocket_residues(seq, strict=strict)
     if pocket is None:
         return None, None
     if criterion == "center":
@@ -173,13 +173,15 @@ def run_model(run_dir, split_csv, cfg, device, batches, dense_topn=None):
 
 
 def enrichment(run_dir, split_csv, cfg, device, batches, dense_topn=None,
-               seed=0, criterion="overlap"):
+               seed=0, criterion="overlap", strict=False):
     rng = random.Random(seed)
-    rows = []
+    rows, skipped = [], 0
     for sel, seq, n_out in run_model(run_dir, split_csv, cfg, device,
                                      batches, dense_topn):
-        pock, n_pocket_res = pocket_output_indices(seq, n_out, criterion)
+        pock, n_pocket_res = pocket_output_indices(seq, n_out, criterion,
+                                                   strict)
         if pock is None or not sel:
+            skipped += 1
             continue
         sel = {j for j in sel if j < n_out}
         if not sel:
@@ -199,7 +201,11 @@ def enrichment(run_dir, split_csv, cfg, device, batches, dense_topn=None,
             "random_in_pocket": len(rnd & pock) / len(rnd),
             "p": hypergeom_sf(hit, n_out, len(pock), len(sel)),
         })
-    return pd.DataFrame(rows)
+    out = pd.DataFrame(rows)
+    # Carried so the summary can state how much of the split was scorable;
+    # an enrichment without that number is not interpretable.
+    out.attrs["skipped"] = skipped
+    return out
 
 
 def summarise(df, label):
@@ -208,7 +214,10 @@ def summarise(df, label):
         return None
     n = len(df)
     e = df.enrichment
-    print(f"\n  {label}  ({n} complexes)")
+    sk = df.attrs.get("skipped", 0)
+    print(f"\n  {label}  ({n} complexes scored, {sk} skipped as "
+          f"unresolved = {n / (n + sk):.1%} coverage)" if n + sk
+          else f"\n  {label}")
     print(f"    mean support            {df.support.mean():8.1f} windows")
     print(f"    pocket fraction (chance){df.pocket_frac.mean():8.3f}")
     print(f"    selected in pocket      {df.in_pocket.mean():8.3f}")
@@ -239,6 +248,10 @@ def main():
     ap.add_argument("--root", default="./datasets")
     ap.add_argument("--batches", type=int, default=12,
                     help="0 for the whole split")
+    ap.add_argument("--strict", action="store_true",
+                    help="require all five motifs rather than HRD+DFG. "
+                         "Lower coverage, larger pockets; report both if "
+                         "you report either.")
     ap.add_argument("--criterion", default="both",
                     choices=["overlap", "center", "both"],
                     help="how a 16-residue window counts as in-pocket")
@@ -250,8 +263,10 @@ def main():
         if not os.path.exists(full):
             raise SystemExit(f"missing {full}; run download_data.py first")
         seqs = pd.read_csv(full).Protein.drop_duplicates().tolist()
-        print(f"\n  motif audit, {args.data}")
+        print(f"\n  motif audit, {args.data}  [anchors: HRD+DFG required]")
         KM.audit(seqs)
+        print(f"\n  motif audit, {args.data}  [strict: all five required]")
+        KM.audit(seqs, strict=True)
         return
 
     if not args.run:
@@ -275,7 +290,7 @@ def main():
     for crit in crits:
         print(f"\n{'=' * 64}\n  criterion: {crit}\n{'=' * 64}")
         add = enrichment(args.run, csv, cfg, device, args.batches,
-                         criterion=crit)
+                         criterion=crit, strict=args.strict)
         s_add = summarise(add, "additive (ours)")
         if args.out:
             path = args.out.replace(".csv", f"_{crit}.csv")
@@ -286,7 +301,8 @@ def main():
         # Matched support, complex by complex, from the additive run.
         topn = add.support.tolist() if not add.empty else []
         pol = enrichment(args.control, csv, ccfg, device, args.batches,
-                         dense_topn=topn, criterion=crit)
+                         dense_topn=topn, criterion=crit,
+                         strict=args.strict)
         s_pol = summarise(pol, "pooled, top-N at matched support")
         if s_add and s_pol:
             print(f"\n  additive {s_add['enrichment']:.2f}x against pooled "
@@ -296,10 +312,16 @@ def main():
                   "fraction, so the comparison is not confounded by "
                   "pocket size.")
 
-    print("\n  A motif-derived pocket is a biological prior, not a "
-          "crystallographic measurement. The supported claim is that the "
-          "selected contacts concentrate on the catalytic machinery, not "
-          "that they are the co-crystal contacts.")
+    print("\n  Two caveats that belong with any number above.")
+    print("  A motif-derived pocket is a biological prior, not a "
+          "crystallographic measurement, so the claim is that the selected")
+    print("  contacts concentrate on the catalytic machinery, not that "
+          "they are the co-crystal contacts. And coverage is below 100%, "
+          "so")
+    print("  an absolute enrichment describes the resolvable subset while "
+          "the additive-against-pooled comparison, run on identical")
+    print("  sequences, does not depend on which subset that is. Lead with "
+          "the comparison.")
 
 
 if __name__ == "__main__":
