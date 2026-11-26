@@ -128,7 +128,10 @@ def selected_residues(alpha, n_out, topn=None):
     out = []
     for b in range(per_res.shape[0]):
         row = per_res[b]
-        if topn is None:
+        if topn is None or b >= len(topn):
+            # No matched budget for this complex: fall back to the
+            # non-zero set rather than guessing a budget, and let the
+            # caller's length check surface the mismatch.
             out.append(set(torch.nonzero(row > 0).flatten().tolist()))
         else:
             k = min(int(topn[b]), int((row > 0).sum()), n_out)
@@ -182,8 +185,16 @@ def enrichment(run_dir, split_csv, cfg, device, batches, dense_topn=None,
                seed=0, criterion="overlap", strict=False):
     rng = random.Random(seed)
     rows, skipped = [], 0
+    # Support for every complex in loader order, including the ones whose
+    # kinase domain does not resolve. The control is scored at this
+    # model's support complex by complex, and the control's loader walks
+    # the whole split, so a list covering only the scored complexes runs
+    # out partway through and silently shifts every later match.
+    all_support = []
     for sel, seq, n_out in run_model(run_dir, split_csv, cfg, device,
                                      batches, dense_topn):
+        sel_in = {j for j in sel if j < n_out}
+        all_support.append(len(sel_in))
         pock, n_pocket_res = pocket_output_indices(seq, n_out, criterion,
                                                    strict)
         if pock is None or not sel:
@@ -211,6 +222,7 @@ def enrichment(run_dir, split_csv, cfg, device, batches, dense_topn=None,
     # Carried so the summary can state how much of the split was scorable;
     # an enrichment without that number is not interpretable.
     out.attrs["skipped"] = skipped
+    out.attrs["all_support"] = all_support
     return out
 
 
@@ -234,7 +246,22 @@ def summarise(df, label):
     print(f"    ceiling at this chance  {ceiling:8.2f}x "
           f"<- the most any method could score")
     print(f"    complexes enriched >1x  {(e > 1).mean():8.1%}")
-    print(f"    complexes p<0.05        {(df.p < 0.05).mean():8.1%}")
+    print(f"    complexes p<0.05        {(df.p < 0.05).mean():8.1%} "
+          f"<- low by construction: ~{df.support.mean():.0f} windows per "
+          f"complex has little power on its own")
+    # The aggregate is where the power is. Pool the contacts across
+    # complexes and ask whether the pocket share exceeds chance, and run a
+    # sign test on the per-complex enrichments.
+    tot_sel = float(df.support.sum())
+    tot_hit = float((df.in_pocket * df.support).sum())
+    tot_exp = float((df.pocket_frac * df.support).sum())
+    up = int((e > 1).sum())
+    both = int(((e > 1) | (e < 1)).sum())
+    z = ((up - both / 2) / math.sqrt(both / 4)) if both else float("nan")
+    print(f"    pooled over complexes   {tot_hit:.0f} of {tot_sel:.0f} "
+          f"windows in pocket vs {tot_exp:.0f} expected "
+          f"({tot_hit / tot_exp if tot_exp else float('nan'):.2f}x)")
+    print(f"    sign test on enrichment {up}/{both} above 1x, z={z:+.1f}")
     return {"n": n, "enrichment": float(e.mean()),
             "in_pocket": float(df.in_pocket.mean()),
             "random": float(df.random_in_pocket.mean()),
@@ -304,11 +331,17 @@ def main():
             print(f"\n    per-complex rows -> {path}")
         if ccfg is None:
             continue
-        # Matched support, complex by complex, from the additive run.
-        topn = add.support.tolist() if not add.empty else []
+        # Matched support, complex by complex, from the additive run,
+        # covering every complex the loader yields.
+        topn = add.attrs.get("all_support", [])
         pol = enrichment(args.control, csv, ccfg, device, args.batches,
                          dense_topn=topn, criterion=crit,
                          strict=args.strict)
+        n_pol = len(pol) + pol.attrs.get("skipped", 0)
+        if len(topn) != n_pol:
+            print(f"\n    WARNING: matched-support list covers {len(topn)} "
+                  f"complexes but the control walked {n_pol}. The two arms "
+                  f"are not aligned; do not use this comparison.")
         s_pol = summarise(pol, "pooled, top-N at matched support")
         if s_add and s_pol:
             print(f"\n  additive {s_add['enrichment']:.2f}x against pooled "
